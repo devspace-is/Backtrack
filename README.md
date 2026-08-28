@@ -61,6 +61,11 @@ Jedes Protokollobjekt besitzt ein Feld `kind`:
 - `post-dispatch-default-prevented`: die Webseite hat das Ereignis vermutlich
   nach dem Backtrack-Aufzeichner abgebrochen.
 
+Abgeschlossene Messungen erscheinen zusätzlich als einzelne Zeile mit dem
+Präfix `[Backtrack:Gesture:SessionJSON]`. Diese kompakte JSON-Zeile ist in
+jedem JavaScript-Kontext der DevTools sichtbar. Für eine schnelle Auswertung
+ist deshalb kein Wechsel zu **Backtrack Gesture Research** erforderlich.
+
 `POSITIVE_X` und `NEGATIVE_X` sind absichtlich noch **nicht** als „zurück“ oder
 „vorwärts“ bezeichnet. Welche Richtung welche Bedeutung hat, hängt von Gerät,
 macOS-Einstellung und Browser ab und muss im Versuch bestimmt werden.

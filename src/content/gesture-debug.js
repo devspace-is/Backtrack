@@ -11,6 +11,7 @@
 
   const VERSION = "0.1.0";
   const LOG_PREFIX = "[Backtrack:Gesture]";
+  const SESSION_SUMMARY_PREFIX = "[Backtrack:Gesture:SessionJSON]";
   const BUFFER_LIMIT = 2500;
   const DELTA_MODE_NAMES = Object.freeze({
     0: "PIXEL",
@@ -85,6 +86,15 @@
 
     const logger = level === "info" ? console.info : console.debug;
     logger(LOG_PREFIX, entry);
+
+    // Keep the detailed object log for interactive inspection, but also emit
+    // completed sessions as plain JSON. DevTools shows this line in every
+    // JavaScript context, so collecting a result does not depend on selecting
+    // the extension's isolated execution context after a navigation.
+    if (kind === "session-end") {
+      console.info(SESSION_SUMMARY_PREFIX, JSON.stringify(entry));
+    }
+
     return entry;
   }
 

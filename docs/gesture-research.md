@@ -41,34 +41,52 @@ keinen Service Worker, keine Tab-API und keine History-Verwaltung.
    erheblicher Produkt- und Kompatibilitätseingriff und keinesfalls automatisch
    akzeptiert.
 
+### Durch die erste echte Trackpad-Messreihe belegt
+
+Auf der getesteten Seite ohne nutzbares Zurück-Ziel kamen vier physische
+Zurück-Wischbewegungen jeweils als lange DOM-`wheel`-Folge im Content Script
+an. Alle vier Folgen wurden abgeschlossen und zusammengefasst. Auf diesem Mac
+lieferte die physische Zurück-Bewegung ein negatives `deltaX`. Diese Zuordnung
+gilt nur für die gemessene Geräte- und Systemeinstellung; der Code behandelt
+das Vorzeichen weiterhin nicht allgemein als festes „Zurück“.
+
+Besonders wichtig: In jeder Folge war nur das erste Ereignis abbrechbar
+(`cancelable: true`). Alle weiteren 83 bis 141 Ereignisse derselben Folge waren
+nicht mehr abbrechbar. Ein erst nach Überschreiten der 80-Pixel-Schwelle
+aufgerufenes `preventDefault()` käme damit zu spät. Der kontrollierte
+Unterdrückungsversuch muss deshalb prüfen, ob schon das vorsorgliche Abbrechen
+des ersten horizontalen Ereignisses Braves Navigation zuverlässig stoppt.
+
 ### Noch nicht empirisch belegt
 
-- Ob die gesamte native Brave-Geste als DOM-`wheel`-Folge ankommt.
-- Ab welchem Punkt Brave Ereignisse selbst verbraucht und nicht mehr an den
-  Seiteninhalt weitergibt.
+- Ob dieselbe vollständige DOM-`wheel`-Folge auch bei einem Tab mit nutzbarer
+  interner Zurück-History ankommt.
+- Ob und wann Brave Ereignisse bei tatsächlich möglicher Browsernavigation
+  selbst verbraucht und nicht mehr an den Seiteninhalt weitergibt.
 - Ob ein nicht-passiver Listener mit `preventDefault()` die native Navigation
   auf der konkret getesteten Brave-/macOS-Version stabil verhindert.
 - Ob das Verhalten in Tabs ohne eigene Back-History vom Verhalten in Tabs mit
   Back-History abweicht.
-- Welche `deltaX`-Polarität bei den beiden physischen Wischrichtungen mit den
-  verwendeten macOS-Einstellungen erscheint.
+- Welche `deltaX`-Polarität die physische Gegenrichtung auf dieser Konfiguration
+  liefert.
 - Ob robuste Grenzwerte über langsame, schnelle und momentumreiche Gesten sowie
   unterschiedliche Trackpads hinweg existieren.
 
 ## Versuchsaufbau
 
-Vor der Auswertung ausfüllen:
+Aktueller Stand der erfassten Testumgebung:
 
 | Merkmal | Wert |
 | --- | --- |
-| macOS-Version | Noch zu messen |
-| Brave-Version | Noch zu messen |
+| macOS-Version | 26.6.2 (Build 25G83) |
+| Brave-Version | 152.1.94.117 |
 | Chromium-Version laut `brave://version` | Noch zu messen |
-| Gerät / Trackpad | Noch zu messen |
+| Gerät / Trackpad | MacBook Pro (Mac14,6), eingebautes Trackpad |
 | „Natürliche Scrollrichtung“ | Noch zu messen |
 | Brave-Einstellung für Seitennavigation per Wischgeste | Noch zu messen |
 | Erweiterung | Backtrack Gesture Research 0.1.0 |
-| DevTools „Protokoll beibehalten“ | Muss aktiv sein |
+| Testseite | `https://ai4performance.com/`, kein nutzbares Zurück-Ziel |
+| DevTools „Protokoll beibehalten“ | Aktiv |
 
 Wichtig: Eine synthetische Wheel-Eingabe aus DevTools oder Testsoftware reicht
 nicht als Nachweis. Nur eine echte Zwei-Finger-Bewegung durchläuft die native
@@ -132,13 +150,15 @@ Logsignal `threshold-crossed` bedeutet nur, dass die Zahlen eine Schwelle
 
 ## Ergebnismatrix
 
-`NICHT GETESTET` bedeutet: Es liegt noch keine echte Trackpad-Messung vor. Die
-Felder dürfen nicht durch Annahmen oder synthetische Wheel-Ereignisse ersetzt
-werden.
+`NICHT GETESTET` bedeutet: Es liegt noch keine passende echte
+Trackpad-Messung vor. `TEILWEISE GETESTET` bedeutet: Es gibt echte Messdaten,
+aber mindestens eine Bedingung des Testfalls ist noch nicht ausreichend
+kontrolliert. Die Felder dürfen nicht durch Annahmen oder synthetische
+Wheel-Ereignisse ersetzt werden.
 
 | Test | preventDefault | Erwartete Beobachtung | Tatsächlicher Befund | Status |
 | --- | --- | --- | --- | --- |
-| A1: einfache Seite, physisch nach rechts | aus | Vorzeichen und vollständige Folge erfassen | Ausstehend | NICHT GETESTET |
+| A1: einfache Seite, physisch nach rechts | aus | Vorzeichen und vollständige Folge erfassen | Vier vollständige Folgen; Zurück-Bewegung ergab `NEGATIVE_X`. Seitlicher Scrollkontext der Seite noch nicht separat kontrolliert. | TEILWEISE GETESTET |
 | A2: einfache Seite, physisch nach links | aus | Gegenrichtung zu A1 erfassen | Ausstehend | NICHT GETESTET |
 | B1: vertikales Scrollen langsam | aus | Kein horizontaler Kandidat | Ausstehend | NICHT GETESTET |
 | B2: vertikales Scrollen schnell | aus | Kein horizontaler Kandidat trotz kleiner X-Anteile | Ausstehend | NICHT GETESTET |
@@ -147,9 +167,33 @@ werden.
 | D1: native Back-Geste mit interner History | aus | Eventankunft, Vollständigkeit und Brave-Navigation vergleichen | Ausstehend | NICHT GETESTET |
 | D2: Wiederholung von D1 | horizontal | Prüfen, ob DOM-Abbruch gelingt und native Navigation ausbleibt | Ausstehend | NICHT GETESTET |
 | D3: Wiederholung von D1 | aus, Root-CSS `contain` | CSS-Einfluss getrennt vom JS-Abbruch prüfen | Ausstehend | NICHT GETESTET |
-| D4: Back-Geste ohne interne History | aus | Prüfen, ob dieselbe Eventfolge sichtbar bleibt | Ausstehend | NICHT GETESTET |
+| D4: Back-Geste ohne interne History | aus | Prüfen, ob dieselbe Eventfolge sichtbar bleibt | Vier vollständige Folgen sichtbar; jeweils nur Ereignis 1 abbrechbar, alle Folgeereignisse nicht abbrechbar. Keine Navigation beobachtet, da kein Zurück-Ziel vorhanden war. | GETESTET |
 | E1: kurzer schneller Impuls | aus | Anzahl und Dauer abklingender Folge messen | Ausstehend | NICHT GETESTET |
 | E2: zwei getrennte schnelle Impulse | aus | Zwei Zusammenfassungen, kein Mehrfachsignal pro Impuls | Ausstehend | NICHT GETESTET |
+
+## Erste Messreihe: Back-Geste ohne interne History
+
+Am 28. August 2026 wurden auf echter Hardware vier physische
+Zurück-Wischbewegungen aufgezeichnet. `preventDefault` war ausgeschaltet. Die
+Seite hatte kein nutzbares internes Zurück-Ziel, deshalb beweist diese Reihe
+noch nicht, ob Brave bei möglicher Navigation parallel selbst zurücknavigiert.
+
+| Folge | Dauer | Ereignisse | Netto-X | Absolut-X | Absolut-Y | größtes \|X\| | Abbrechbar / nicht abbrechbar |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.074,7 ms | 129 | -2.764 px | 2.764 px | 24 px | 73 px | 1 / 128 |
+| 2 | 682,3 ms | 84 | -2.481 px | 2.481 px | 25 px | 64 px | 1 / 83 |
+| 3 | 1.370,0 ms | 142 | -2.910 px | 2.910 px | 29 px | 76 px | 1 / 141 |
+| 4 | 1.328,1 ms | 134 | -2.326 px | 2.326 px | 24 px | 60 px | 1 / 133 |
+
+Alle 489 Einzelereignisse verwendeten `deltaMode: PIXEL`. Die X-Bewegung war
+in allen vier Folgen durchgehend negativ; `positiveX` blieb jeweils null. Jede
+Folge überschritt die vorläufige Kandidatenschwelle genau einmal und erzeugte
+eine einzelne Abschlusszusammenfassung. Da die Abbruchfunktion ausgeschaltet
+war, gab es erwartungsgemäß keinen eigenen Abbruchversuch.
+
+Diese Reihe zeigt, dass die Erkennung am History-Rand grundsätzlich genug
+Messdaten erhält. Sie zeigt **noch nicht**, dass eine reine Extension die
+native Brave-Navigation kontrollieren kann. Dafür sind D1 und D2 entscheidend.
 
 ## Auswertungskriterien
 
