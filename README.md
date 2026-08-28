@@ -10,13 +10,14 @@ Brave unter macOS in einer Chromium-Erweiterung zuverlässig erkennen lässt.
 zusammen. Sie schließt keine Tabs, aktiviert keine Tabs und verändert keine
 Browser-History.
 
-Die echten Trackpad-Messungen sind abgeschlossen. Ergebnis: Ein begrenzter
-Phase-2-Prototyp ist technisch vertretbar. DOM-`preventDefault()` stoppt Braves
-native Zurück-Geste nicht; `overscroll-behavior-x: contain` am Wurzelelement
-tat dies im kontrollierten Versuch. Vertikales Scrollen blieb ohne
-Fehlkandidat, und der lokale horizontale Scrollbereich blieb auch mit diesem
-Schutz bedienbar. Die eigentliche Tab- und History-Logik ist noch nicht
-implementiert.
+Die entscheidenden echten Trackpad-Messungen ergeben ein **Conditional Go**:
+Ein begrenzter Phase-2-Prototyp ist technisch vertretbar. DOM-`preventDefault()`
+stoppt Braves native Zurück-Geste nicht; `overscroll-behavior-x: contain` am
+Wurzelelement tat dies im kontrollierten Versuch. Vertikales Scrollen blieb
+ohne Fehlkandidat, und der lokale horizontale Scrollbereich blieb auch mit
+diesem Schutz bedienbar. Die eigentliche Tab- und History-Logik ist noch nicht
+implementiert. Reale Tabellen, Carousels und komplexe Webanwendungen bleiben
+Teil der offenen erweiterten Kompatibilitätsmatrix.
 
 ## Enthaltene Dateien
 

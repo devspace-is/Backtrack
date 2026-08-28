@@ -2,7 +2,7 @@
 
 Stand: 28. August 2026<br>
 PoC-Version: 0.1.0<br>
-Entscheidungsstatus: **Phase 1 abgeschlossen; begrenzter Phase-2-Prototyp technisch freigegeben**
+Entscheidungsstatus: **Conditional Go für einen begrenzten Phase-2-Prototyp; erweiterte Kompatibilitätsmatrix bleibt offen**
 
 ## Forschungsfrage
 
@@ -373,7 +373,7 @@ veröffentlichungsreifen MVP.**
 Das Content Script sieht die Zurück-Geste wiederholbar und früh. Ein
 DOM-`preventDefault()` kontrolliert Braves native Navigation jedoch nicht. Die
 Root-CSS-Sperre `overscroll-behavior-x: contain` hat sie im kontrollierten Test
-dagegen auch bei zwei Gesten verhindert. Die jetzt abgeschlossene B/C-Matrix
+dagegen auch bei zwei Gesten verhindert. Die abgeschlossene lokale B/C-Kernmatrix
 zeigt außerdem: langsames und schnelles vertikales Scrollen erzeugte keinen
 Kandidaten; der lokale horizontale Scrollbereich wurde in beiden Richtungen
 vollständig erkannt; und er blieb mit aktiver Root-Sperre tatsächlich
