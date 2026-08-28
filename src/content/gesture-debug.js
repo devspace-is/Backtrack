@@ -12,6 +12,7 @@
   const VERSION = "0.1.0";
   const LOG_PREFIX = "[Backtrack:Gesture]";
   const SESSION_SUMMARY_PREFIX = "[Backtrack:Gesture:SessionJSON]";
+  const THRESHOLD_SUMMARY_PREFIX = "[Backtrack:Gesture:ThresholdJSON]";
   const BUFFER_LIMIT = 2500;
   const DELTA_MODE_NAMES = Object.freeze({
     0: "PIXEL",
@@ -93,6 +94,13 @@
     // the extension's isolated execution context after a navigation.
     if (kind === "session-end") {
       console.info(SESSION_SUMMARY_PREFIX, JSON.stringify(entry));
+    }
+
+    // Native browser navigation can destroy the page before a gesture session
+    // reaches its normal end. Persist the threshold snapshot as plain JSON as
+    // well, so DevTools "Preserve log" keeps its scroll-context evidence.
+    if (kind === "threshold-crossed") {
+      console.info(THRESHOLD_SUMMARY_PREFIX, JSON.stringify(entry));
     }
 
     return entry;

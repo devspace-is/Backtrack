@@ -10,16 +10,20 @@ Brave unter macOS in einer Chromium-Erweiterung zuverlässig erkennen lässt.
 zusammen. Sie schließt keine Tabs, aktiviert keine Tabs und verändert keine
 Browser-History.
 
-Die Entscheidung für oder gegen die eigentliche Backtrack-Navigation ist noch
-nicht gefallen. Sie wird erst nach Messungen mit einem echten Trackpad
-getroffen. Künstlich erzeugte Scroll-Ereignisse können die native
-Brave-Zurück-Geste nicht verlässlich nachbilden.
+Die echten Trackpad-Messungen sind abgeschlossen. Ergebnis: Ein begrenzter
+Phase-2-Prototyp ist technisch vertretbar. DOM-`preventDefault()` stoppt Braves
+native Zurück-Geste nicht; `overscroll-behavior-x: contain` am Wurzelelement
+tat dies im kontrollierten Versuch. Vertikales Scrollen blieb ohne
+Fehlkandidat, und der lokale horizontale Scrollbereich blieb auch mit diesem
+Schutz bedienbar. Die eigentliche Tab- und History-Logik ist noch nicht
+implementiert.
 
 ## Enthaltene Dateien
 
 ```text
 manifest.json
 src/content/gesture-debug.js
+docs/gesture-fixture.html
 docs/gesture-research.md
 README.md
 ```
@@ -72,6 +76,11 @@ Abgeschlossene Messungen erscheinen zusätzlich als einzelne Zeile mit dem
 Präfix `[Backtrack:Gesture:SessionJSON]`. Diese kompakte JSON-Zeile ist in
 jedem JavaScript-Kontext der DevTools sichtbar. Für eine schnelle Auswertung
 ist deshalb kein Wechsel zu **Backtrack Gesture Research** erforderlich.
+
+Schwellenüberschreitungen erscheinen außerdem als
+`[Backtrack:Gesture:ThresholdJSON]`. Diese zweite kompakte Zeile bewahrt den
+letzten Scrollkontext bei eingeschaltetem **Protokoll beibehalten** auch dann,
+wenn Brave die Seite vor dem normalen Ende der Messfolge verlässt.
 
 `POSITIVE_X` und `NEGATIVE_X` sind absichtlich noch **nicht** als „zurück“ oder
 „vorwärts“ bezeichnet. Welche Richtung welche Bedeutung hat, hängt von Gerät,
@@ -156,6 +165,23 @@ Für jeden Test zuerst den Messpuffer leeren, genau eine Geste ausführen, kurz
 warten und anschließend den JSON-Export sichern. Browser-Version,
 macOS-Version, Trackpad-Modell und die Einstellung **Natürliche
 Scrollrichtung** mitnotieren.
+
+Für die kontrollierten Fälle B und C kann die lokale Testseite verwendet
+werden. Im Projektordner starten:
+
+```sh
+python3 -m http.server 8765 --bind 127.0.0.1
+```
+
+Danach in Brave öffnen:
+
+```text
+http://127.0.0.1:8765/docs/gesture-fixture.html
+```
+
+Die Seite lädt keine externen Ressourcen. Ihr blauer Bereich beginnt in einer
+mittleren horizontalen Position, sodass beide Richtungen getestet werden
+können.
 
 ### A. Seite ohne horizontales Scrollen
 

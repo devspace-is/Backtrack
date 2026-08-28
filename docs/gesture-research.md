@@ -2,7 +2,7 @@
 
 Stand: 28. August 2026<br>
 PoC-Version: 0.1.0<br>
-Entscheidungsstatus: **Phase 2 noch nicht freigegeben**
+Entscheidungsstatus: **Phase 1 abgeschlossen; begrenzter Phase-2-Prototyp technisch freigegeben**
 
 ## Forschungsfrage
 
@@ -75,18 +75,30 @@ DOM-Abbrechen horizontaler Ereignisse Braves native Navigation nicht stoppt.
    nach zwei physischen Zurück-Gesten geöffnet. Beide Gesten kamen als getrennte
    vollständige Folgen im Content Script an. Die Root-CSS-Sperre ist damit der
    bisher einzige praktisch erfolgreiche reine-Extension-Ansatz.
+4. Langsames und schnelles vertikales Scrollen wurde nicht als horizontaler
+   Kandidat eingestuft. Der schnelle Versuch enthielt 5.669 px vertikale, aber
+   nur 22 px absolute horizontale Bewegung.
+5. Zwei echte horizontale Gesten innerhalb des lokalen Scrollbereichs wurden in
+   beiden Richtungen für jedes Einzelereignis dem `div`-Scrollkontext zugeordnet
+   und durch `HORIZONTAL_SCROLL_CONTEXT` blockiert.
+6. Mit aktiver Root-CSS-Sperre blieb derselbe horizontale Scrollbereich
+   bedienbar: Seine gemessene Position änderte sich durch die Geste von 717 auf
+   0. Die Folge wurde weiterhin vollständig dem Scrollbereich zugeordnet und
+   nicht als Navigationskandidat eingestuft.
 
-### Noch nicht empirisch belegt
+### Weiterhin nicht empirisch belegt
 
 - Ob die vollständige DOM-`wheel`-Folge auch dann auswertbar bleibt, wenn Brave
   ohne DevTools tatsächlich während der Folge navigiert. Das Messfenster selbst
   verändert diesen Pfad; der alte Seitenkontext verschwindet bei Navigation.
 - Ob die erfolgreiche Root-CSS-Sperre auf weiteren normalen Webseiten und nach
   wiederholten Seitenwechseln stabil bleibt.
-- Welche Auswirkungen die Root-CSS-Sperre auf Tabellen, Carousels, Kanban-Boards
-  und andere echte horizontale Interaktionen hat.
-- Welche `deltaX`-Polarität die physische Gegenrichtung auf dieser Konfiguration
-  liefert.
+- Welche Auswirkungen die Root-CSS-Sperre auf komplexe reale Tabellen,
+  Carousels, Kanban-Boards und Webanwendungen außerhalb der lokalen Testseite
+  hat.
+- Ob die positive `deltaX`-Polarität der physischen Gegenrichtung auch bei einer
+  nativen Vorwärts-Geste auf einer einfachen Seite unverändert bleibt. Im
+  lokalen Scrollbereich wurde diese Zuordnung gemessen.
 - Ob robuste Grenzwerte über langsame, schnelle und momentumreiche Gesten sowie
   unterschiedliche Trackpads hinweg existieren.
 
@@ -97,13 +109,13 @@ Aktueller Stand der erfassten Testumgebung:
 | Merkmal | Wert |
 | --- | --- |
 | macOS-Version | 26.6.2 (Build 25G83) |
-| Brave-Version | 152.1.94.117 |
-| Chromium-Version laut `brave://version` | Noch zu messen |
+| Brave-Version | 1.94.117 |
+| Chromium-Version laut `brave://version` | 152.0.7977.64 (arm64) |
 | Gerät / Trackpad | MacBook Pro (Mac14,6), eingebautes Trackpad |
 | „Natürliche Scrollrichtung“ | Noch zu messen |
-| Brave-Einstellung für Seitennavigation per Wischgeste | Noch zu messen |
+| Brave-Seitennavigation per Wischgeste | Aktiv; native Navigation wurde in D1 und D2 beobachtet |
 | Erweiterung | Backtrack Gesture Research 0.1.0 |
-| Testseiten | `https://ai4performance.com/` ohne Zurück-Ziel; `example.com` → IANA mit nutzbarer Zurück-History |
+| Testseiten | `https://ai4performance.com/` ohne Zurück-Ziel; `example.com` → IANA mit nutzbarer Zurück-History; lokale `docs/gesture-fixture.html` für kontrolliertes vertikales und horizontales Scrollen |
 | DevTools „Protokoll beibehalten“ | Aktiv; DevTools für die eigentlichen Navigationstests geschlossen |
 
 Wichtig: Eine synthetische Wheel-Eingabe aus DevTools oder Testsoftware reicht
@@ -137,6 +149,14 @@ Pro Einzelereignis werden lokal protokolliert:
 
 Die Logs enthalten absichtlich keine URL, keinen Seitentext und keine
 Netzwerkübertragung.
+
+Abgeschlossene Folgen werden zusätzlich als
+`[Backtrack:Gesture:SessionJSON]` ausgegeben. Seit dem horizontalen
+Navigationstest wird auch die Schwellenüberschreitung als
+`[Backtrack:Gesture:ThresholdJSON]` gesichert. Dadurch bleibt der letzte
+Scrollkontext mit aktiviertem DevTools-„Protokoll beibehalten“ selbst dann
+auswertbar, wenn Brave den alten Seitenkontext vor dem normalen Sitzungsende
+zerstört.
 
 ## Bildung einer Ereignisfolge
 
@@ -177,11 +197,12 @@ Wheel-Ereignisse ersetzt werden.
 | Test | preventDefault | Erwartete Beobachtung | Tatsächlicher Befund | Status |
 | --- | --- | --- | --- | --- |
 | A1: einfache Seite, physisch nach rechts | aus | Vorzeichen und vollständige Folge erfassen | Vier vollständige Folgen; Zurück-Bewegung ergab `NEGATIVE_X`. Seitlicher Scrollkontext der Seite noch nicht separat kontrolliert. | TEILWEISE GETESTET |
-| A2: einfache Seite, physisch nach links | aus | Gegenrichtung zu A1 erfassen | Ausstehend | NICHT GETESTET |
-| B1: vertikales Scrollen langsam | aus | Kein horizontaler Kandidat | Ausstehend | NICHT GETESTET |
-| B2: vertikales Scrollen schnell | aus | Kein horizontaler Kandidat trotz kleiner X-Anteile | Ausstehend | NICHT GETESTET |
-| C1: horizontaler Bereich, mittlere Position | aus | Scrollkontext erkannt, kein Kandidat | Ausstehend | NICHT GETESTET |
-| C2: horizontaler Bereich, Randposition | aus | Scrollkontext weiterhin konservativ blockiert | Ausstehend | NICHT GETESTET |
+| A2: einfache Seite, physisch nach links | aus | Gegenrichtung zu A1 erfassen | Physische Gegenrichtung im kontrollierten Scrollbereich ergab ausschließlich positives X; native Vorwärts-Navigation auf einfacher Seite nicht separat ausgeführt. | TEILWEISE GETESTET |
+| B1: vertikales Scrollen langsam | aus | Kein horizontaler Kandidat | Zwei vertikale Folgen mit 215 beziehungsweise 450 px Netto-Y; keine Schwellenüberschreitung, beide `NO_CANDIDATE`. | GETESTET |
+| B2: vertikales Scrollen schnell | aus | Kein horizontaler Kandidat trotz kleiner X-Anteile | 162 Ereignisse, 5.669 px Netto-Y und nur 22 px Absolut-X; keine Schwellenüberschreitung, `NO_CANDIDATE`. | GETESTET |
+| C1: horizontaler Bereich, mittlere Position | aus | Scrollkontext erkannt, kein Kandidat | 143 Ereignisse, `netX: -3315`; 143/143 Ereignisse im `div`-Scrollkontext, Blocker `HORIZONTAL_SCROLL_CONTEXT`. | GETESTET |
+| C2: horizontaler Bereich, Randposition/Gegenrichtung | aus | Scrollkontext weiterhin konservativ blockiert | 142 Ereignisse, `netX: +3665`; 142/142 Ereignisse im `div`-Scrollkontext, Blocker `HORIZONTAL_SCROLL_CONTEXT`. | GETESTET |
+| C3: horizontaler Bereich mit Root-CSS `contain` | aus, Root-CSS `contain` | Scrollen funktioniert weiter, kein Navigationskandidat | 152/152 Ereignisse im Scrollkontext; Position änderte sich von 717 auf 0; `NO_CANDIDATE`. | GETESTET |
 | D1: native Back-Geste mit interner History | aus | Eventankunft, Vollständigkeit und Brave-Navigation vergleichen | Mit DevTools: 176 Ereignisse, aber keine Navigation. Ohne DevTools: native Navigation IANA → `example.com`. DevTools beeinflussen den Test selbst. | GETESTET |
 | D2: Wiederholung von D1 | horizontal | Prüfen, ob DOM-Abbruch gelingt und native Navigation ausbleibt | Trotz geladenem horizontalen Abbruchmodus und geschlossenen DevTools navigierte Brave IANA → `example.com`. | GETESTET |
 | D3: Wiederholung von D1 | aus, Root-CSS `contain` | CSS-Einfluss getrennt vom JS-Abbruch prüfen | Zwei physische Back-Gesten, zwei getrennte Ereignisfolgen; IANA blieb geöffnet. | GETESTET |
@@ -259,6 +280,59 @@ negativ auf X und wurden getrennt abgeschlossen. Es gab keinen DOM-Abbruch. Die
 erfolgreiche Unterdrückung ist daher dem Root-CSS zuzuordnen, nicht
 `preventDefault()`.
 
+## Vertikales Scrollen und horizontale Scrollbereiche
+
+Die lokale Testseite `docs/gesture-fixture.html` enthält einen langen
+vertikalen Bereich und einen horizontalen `overflow-x: auto`-Bereich, der beim
+Laden bewusst mittig positioniert wird. Sie enthält keine eigene Gestenlogik
+und lädt keine externen Ressourcen.
+
+### B1/B2: Vertikale Bewegungen
+
+| Versuch | Dauer | Ereignisse | Netto-X | Absolut-X | Netto-Y | Absolut-Y | Ergebnis |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| langsam 1 | 1.336,8 ms | 124 | 37 px | 37 px | 215 px | 215 px | `NO_CANDIDATE` |
+| langsam 2 | 1.386,2 ms | 142 | 46 px | 92 px | 450 px | 450 px | `NO_CANDIDATE` |
+| schnell | 1.568,9 ms | 162 | 12 px | 22 px | 5.669 px | 5.669 px | `NO_CANDIDATE` |
+
+Keine dieser Folgen erzeugte `threshold-crossed`. Der schnelle Versuch ist ein
+besonders deutlicher Gegenbeleg gegen eine Verwechslung von geringem
+seitlichem Fingerdrift mit der Zurück-Geste.
+
+### C1/C2: Scrollkontext in beiden Richtungen
+
+| Richtung | Dauer | Ereignisse | Netto-X | Absolut-Y | Kontextabdeckung | Blocker |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| physisch rechts | 1.401,3 ms | 143 | -3.315 px | 26 px | 143 / 143 | `HORIZONTAL_SCROLL_CONTEXT` |
+| physisch links | 1.387,5 ms | 142 | +3.665 px | 27 px | 142 / 142 | `HORIZONTAL_SCROLL_CONTEXT` |
+
+Beide Folgen waren horizontal eindeutig genug, um die Zahlenschwelle zu
+überschreiten. Trotzdem lautete die endgültige Einordnung jeweils
+`NO_CANDIDATE`, weil alle Ereignisse innerhalb des horizontalen Scrollbereichs
+begannen. Damit ist zugleich die Vorzeichenbeobachtung dieser Konfiguration in
+beiden physischen Richtungen bestätigt.
+
+Ein erster, nicht ausreichend instrumentierter Versuch navigierte sofort von
+der lokalen Testseite zurück zu IANA. Da der alte Seitenkontext vor dem
+Sitzungsende verschwand und damals noch keine `ThresholdJSON`-Zeile existierte,
+konnte die tatsächliche Startposition nicht mehr bewiesen werden. Dieser
+Versuch wird nicht als C1-Ergebnis gewertet; er führte zur ausfallsicheren
+Schwellen-JSON-Ausgabe.
+
+### C3: Scrollkompatibilität der Root-CSS-Sperre
+
+Vor dem Versuch bestätigte die Seitenkonsole den berechneten Root-Wert
+`overscroll-behavior-x: contain`. Der horizontale Bereich stand bei
+`scrollLeft: 717`. Nach einer echten physischen Bewegung stand er bei
+`scrollLeft: 0` und hatte damit sichtbar und messbar gescrollt.
+
+Die dazugehörige Folge dauerte 1.498,7 ms, enthielt 152 Ereignisse und erreichte
+`netX: -4423 px`. Alle 152 Ereignisse wurden dem `div`-Scrollkontext zugeordnet;
+die Einordnung blieb wegen `HORIZONTAL_SCROLL_CONTEXT` bei `NO_CANDIDATE`.
+Damit beschädigte die Root-Sperre den kontrollierten inneren Scrollbereich in
+diesem Versuch nicht. Reale komplexe Webanwendungen bleiben ein notwendiger
+Kompatibilitätstest der späteren Phase 2.
+
 ## Auswertungskriterien
 
 ### Reine Extension ist für Phase 2 ausreichend plausibel, wenn
@@ -291,22 +365,28 @@ einer dieser Befunde reproduzierbar auftritt:
 - Richtungs- oder Momentumverhalten schwankt so stark, dass unbeabsichtigtes
   Tab-Schließen realistisch bleibt.
 
-## Vorläufige Entscheidung
+## Entscheidung nach Phase 1
 
-**Bedingte technische Plausibilität, aber noch keine Freigabe für Phase 2.**
+**Go für einen begrenzten Phase-2-Prototyp; noch kein Go für einen
+veröffentlichungsreifen MVP.**
 
 Das Content Script sieht die Zurück-Geste wiederholbar und früh. Ein
 DOM-`preventDefault()` kontrolliert Braves native Navigation jedoch nicht. Die
 Root-CSS-Sperre `overscroll-behavior-x: contain` hat sie im kontrollierten Test
-dagegen auch bei zwei Gesten verhindert. Eine reine Extension ist damit nicht
-grundsätzlich ausgeschlossen, sie wäre aber auf einen Eingriff in das
-Scroll-/Überlaufverhalten jeder betroffenen Webseite angewiesen.
+dagegen auch bei zwei Gesten verhindert. Die jetzt abgeschlossene B/C-Matrix
+zeigt außerdem: langsames und schnelles vertikales Scrollen erzeugte keinen
+Kandidaten; der lokale horizontale Scrollbereich wurde in beiden Richtungen
+vollständig erkannt; und er blieb mit aktiver Root-Sperre tatsächlich
+scrollbar.
 
-Vor einer Freigabe für Tab-Schließen, `openerTabId` oder History-Erkennung muss
-deshalb zuerst die False-Positive- und Kompatibilitätsmatrix B/C abgeschlossen
-werden. Entscheidend ist, ob die Root-CSS-Sperre auf horizontal scrollbaren
-Webseiten vertretbar eingesetzt und bei unsicherem Zustand zuverlässig entfernt
-werden kann. Bis dahin bleibt das Phase-2-Gate geschlossen.
+Damit ist eine reine Extension für die nächste, eng begrenzte technische Phase
+ausreichend plausibel. Phase 2 darf `openerTabId`, konservative
+History-Erkennung sowie Aktivieren/Schließen zunächst als unveröffentlichte
+Entwicklungsversion erproben. Die Root-CSS-Sperre bleibt dabei ein erheblicher
+Seiteneingriff. Vor einem MVP müssen reale Tabellen, Carousels, Kanban-Boards,
+mehrere Brave/Chromium-Versionen und weitere Trackpads geprüft werden. Bei
+unklarem Scrollkontext gilt weiterhin: keine Aktion und insbesondere kein Tab
+schließen.
 
 ## Kleinstmögliche Alternativen bei negativem Ergebnis
 
