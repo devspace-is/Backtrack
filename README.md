@@ -46,11 +46,18 @@ Der Projektordner ist:
 1. Eine normale `https://`-Webseite öffnen.
 2. Die Entwicklerwerkzeuge öffnen (`⌥⌘I`).
 3. In der Konsole **Preserve log** beziehungsweise **Protokoll beibehalten**
-   aktivieren. Das ist für Navigationsversuche wichtig.
+   aktivieren. Das hilft beim Vergleichen von Rohdaten über ein Neuladen hinweg.
 4. Die Protokollstufe **Verbose** einblenden. Einzelereignisse werden mit
    `console.debug` ausgegeben; Beginn, Ende und Schwellenüberschreitung einer
    Geste erscheinen zusätzlich als hervorgehobene Einträge.
 5. Nach `[Backtrack:Gesture]` filtern.
+
+Wichtig für echte Navigationsversuche: In der getesteten Brave-Version hat die
+rechts angedockte DevTools-Konsole die native Zwei-Finger-Zurück-Navigation
+selbst verhindert. DevTools eignen sich deshalb zum Erfassen der Ereignisse,
+aber nicht als alleiniger Nachweis dafür, dass Backtrack die Browsernavigation
+unterdrückt. Für diesen Test DevTools schließen und den tatsächlichen
+Seitenwechsel beobachten.
 
 Jedes Protokollobjekt besitzt ein Feld `kind`:
 
