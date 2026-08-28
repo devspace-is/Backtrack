@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Backtrack Gesture Research",
+  "version": "0.1.0",
+  "description": "Local proof of concept for observing macOS trackpad wheel gestures in Chromium browsers.",
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "src/content/gesture-debug.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "ISOLATED"
+    }
+  ]
+}
