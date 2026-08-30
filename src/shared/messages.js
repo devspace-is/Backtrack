@@ -1,0 +1,3 @@
+export const MESSAGE_TYPES = Object.freeze({
+  GET_OPENER_CONTEXT: "BACKTRACK_GET_OPENER_CONTEXT",
+});

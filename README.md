@@ -5,32 +5,44 @@ Brave unter macOS in einer Chromium-Erweiterung zuverlässig erkennen lässt.
 
 ## Aktueller Stand
 
-**Phase 1 – Gesture-Proof-of-Concept.** Die Erweiterung protokolliert
-`wheel`-Ereignisse und fasst zusammengehörige Ereignisse zu einer Messreihe
-zusammen. Sie schließt keine Tabs, aktiviert keine Tabs und verändert keine
-Browser-History.
+**Phase 2 – erster begrenzter Baustein.** Der Gesture-Proof-of-Concept aus
+Phase 1 bleibt unverändert nutzbar. Zusätzlich prüft ein kleiner
+Hintergrundprozess (Manifest-V3-Service-Worker) jetzt, ob ein neu geöffneter Tab
+einen noch vorhandenen, eindeutigen Ursprungstab (`openerTabId`) im selben
+Browserfenster besitzt. Die Erweiterung schließt oder aktiviert weiterhin
+keine Tabs und verändert keine Browser-History.
 
 Die entscheidenden echten Trackpad-Messungen ergeben ein **Conditional Go**:
 Ein begrenzter Phase-2-Prototyp ist technisch vertretbar. DOM-`preventDefault()`
 stoppt Braves native Zurück-Geste nicht; `overscroll-behavior-x: contain` am
 Wurzelelement tat dies im kontrollierten Versuch. Vertikales Scrollen blieb
 ohne Fehlkandidat, und der lokale horizontale Scrollbereich blieb auch mit
-diesem Schutz bedienbar. Die eigentliche Tab- und History-Logik ist noch nicht
-implementiert. Reale Tabellen, Carousels und komplexe Webanwendungen bleiben
-Teil der offenen erweiterten Kompatibilitätsmatrix.
+diesem Schutz bedienbar. Die sichere Herkunftsprüfung ist damit isoliert
+umgesetzt. History-Erkennung und Tab-Aktionen folgen erst in getrennten
+Schritten. Reale Tabellen, Carousels und komplexe Webanwendungen bleiben Teil
+der offenen erweiterten Kompatibilitätsmatrix.
 
 ## Enthaltene Dateien
 
 ```text
 manifest.json
+package.json
+src/background/opener-message-handler.js
+src/background/opener-resolver.js
+src/background/service-worker.js
 src/content/gesture-debug.js
+src/shared/messages.js
 docs/gesture-fixture.html
+docs/opener-safety.md
 docs/gesture-research.md
+tests/opener-message-handler.test.js
+tests/opener-resolver.test.js
 README.md
 ```
 
-Es gibt bewusst kein Build-System und keine Abhängigkeiten. Brave kann den
-Ordner direkt als entpackte Erweiterung laden.
+Es gibt bewusst keinen Build-Schritt und keine externen Abhängigkeiten. Brave
+kann den Ordner direkt als entpackte Erweiterung laden. `package.json` enthält
+nur den lokalen Testbefehl.
 
 ## Installation in Brave
 
@@ -63,6 +75,20 @@ selbst verhindert. DevTools eignen sich deshalb zum Erfassen der Ereignisse,
 aber nicht als alleiniger Nachweis dafür, dass Backtrack die Browsernavigation
 unterdrückt. Für diesen Test DevTools schließen und den tatsächlichen
 Seitenwechsel beobachten.
+
+### Herkunftsprüfung im Hintergrund
+
+Die Diagnose der Tab-Herkunft erscheint nicht in der Webseitenkonsole, sondern
+in der Konsole des Erweiterungs-Hintergrundprozesses:
+
+1. `brave://extensions` öffnen.
+2. Bei **Backtrack Development** auf den Link zum Service Worker klicken.
+3. Aus einem vorhandenen Tab einen Link in einem neuen Tab öffnen.
+4. Nach `[Backtrack:Opener]` filtern.
+
+Ein Ergebnis mit `ok: true` bestätigt nur die eindeutige Herkunftsbeziehung.
+Es löst keine Navigation aus. URLs, Seitentitel und Seiteninhalte werden dabei
+weder protokolliert noch gespeichert.
 
 Jedes Protokollobjekt besitzt ein Feld `kind`:
 
@@ -247,15 +273,18 @@ Produkterkennung. Der PoC meldet bei einer Schwellenüberschreitung nur
 
 ## Berechtigungen und Datenschutz
 
-| Zugriff | Warum im PoC? | Vermeidbar? | Theoretischer Datenzugriff |
+| Zugriff | Warum benötigt? | Vermeidbar? | Theoretischer Datenzugriff |
 | --- | --- | --- | --- |
-| Keine Chrome-API-Berechtigungen | Der PoC nutzt weder Tabs noch History, Storage oder Netzwerk-APIs. | Bereits vermieden. | Kein Zugriff über privilegierte Erweiterungs-APIs. |
+| Keine ausdrücklich angeforderte Chrome-API-Berechtigung | Der Hintergrundprozess verwendet `chrome.tabs.onCreated` und `chrome.tabs.get()` nur für nicht sensible Tab-Eigenschaften wie IDs, Fenster, angeheftet/gruppiert und `openerTabId`. Dafür verlangt Chromium keine `tabs`-Berechtigung. | Bereits vermieden. Die besonders weitreichende `tabs`-Berechtigung wird nicht eingetragen. | Ohne `tabs`-Berechtigung erhält die Erweiterung über diese API insbesondere keine freigeschalteten Felder für URL, Seitentitel oder Favicon. |
 | Automatisches Content Script auf `http://*/*` und `https://*/*` | Gesten müssen auf unterschiedlichen normalen Webseiten und möglichst früh beobachtet werden. | Für eine manuell pro Seite aktivierte Forschungsversion wäre `activeTab` möglich, würde aber Toolbar-Aktion, Service Worker und einen zusätzlichen Bedienungsschritt verlangen. Für eine Produktionsversion muss die Entscheidung neu bewertet werden. | Ein Content Script könnte grundsätzlich Seiten-DOM lesen oder verändern. Dieser PoC liest nur Ereignis-, Größen- und Scrollkontextdaten, protokolliert keine URL und sendet nichts. |
 
 Die Erweiterung läuft nicht auf `brave://`, `chrome://`, im Chrome Web Store
 oder auf anderen geschützten Browserseiten. `file://` ist ebenfalls nicht im
 Manifest enthalten. Unterseiten in eingebetteten Rahmen werden nur erfasst,
 wenn deren eigene Adresse ebenfalls `http://` oder `https://` verwendet.
+Die Herkunftsprüfung speichert keinen Tab-Baum und keine Browser-History. Ihre
+genauen Sicherheitsregeln stehen in
+[`docs/opener-safety.md`](docs/opener-safety.md).
 
 ## Bekannte Grenzen des PoC
 
@@ -274,6 +303,8 @@ wenn deren eigene Adresse ebenfalls `http://` oder `https://` verwendet.
 ## Quellen für die technische Ausgangslage
 
 - [Chrome-Dokumentation zu Content Scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts)
+- [Chrome-Dokumentation zur Tabs API](https://developer.chrome.com/docs/extensions/reference/api/tabs)
+- [Chrome-Dokumentation zu Erweiterungs-Service-Workern](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/basics)
 - [UI-Events-Spezifikation des W3C](https://www.w3.org/TR/uievents/)
 - [Chromiums macOS-`HistorySwiper`](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_history_swiper.h)
 - [Chromiums `OverscrollController`](https://chromium.googlesource.com/chromium/src/+/HEAD/content/browser/renderer_host/overscroll_controller.cc)
@@ -282,8 +313,7 @@ wenn deren eigene Adresse ebenfalls `http://` oder `https://` verwendet.
 ## Noch ausdrücklich nicht enthalten
 
 - `chrome.tabs.remove()` oder `chrome.tabs.update()`
-- Service Worker und Tab-Herkunft
 - History- oder SPA-Verfolgung
-- Tab-Baum
+- gespeicherter Tab-Baum
 - Optionsseite
 - Telemetrie, Serverzugriffe oder dauerhafte Speicherung
