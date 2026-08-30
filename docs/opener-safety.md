@@ -127,7 +127,4 @@ reason: VALID_OPENER
 ```
 
 Das Protokoll bestätigte zugleich den vorgesehenen Umfang: ausschließlich
-Diagnose, keine Tab-Aktion und keine dauerhafte Speicherung. Ein mittlerer Klick auf
-einen GitHub-Verzeichnislink ergab dagegen in diesem Versuch keine
-`openerTabId`; Backtrack behandelt einen solchen Tab folgerichtig nicht als
-sicher zuordenbaren Kind-Tab.
+Diagnose, keine Tab-Aktion und keine dauerhafte Speicherung.
