@@ -1,16 +1,22 @@
 import { createOpenerMessageListener } from "./opener-message-handler.js";
 import { createNavigationMessageListener } from "./navigation-message-handler.js";
+import { GestureActionGate } from "./gesture-action-gate.js";
 import { NavigationTracker } from "./navigation-tracker.js";
 import { resolveSafeOpener } from "./opener-resolver.js";
 
 const LOG_PREFIX = "[Backtrack:Opener]";
 const navigationTracker = new NavigationTracker(chrome.storage.session);
+const gestureActionGate = new GestureActionGate(chrome.storage.session);
 
 chrome.runtime.onMessage.addListener(
   createOpenerMessageListener(chrome.tabs),
 );
 chrome.runtime.onMessage.addListener(
-  createNavigationMessageListener(chrome.tabs, navigationTracker),
+  createNavigationMessageListener(
+    chrome.tabs,
+    navigationTracker,
+    gestureActionGate,
+  ),
 );
 
 chrome.tabs.onCreated.addListener((tab) => {
@@ -46,9 +52,12 @@ chrome.tabs.onCreated.addListener((tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void navigationTracker.remove(tabId);
+  void gestureActionGate.remove(tabId);
 });
 
 chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
   void navigationTracker.remove(removedTabId);
   void navigationTracker.remove(addedTabId);
+  void gestureActionGate.remove(removedTabId);
+  void gestureActionGate.remove(addedTabId);
 });

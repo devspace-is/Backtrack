@@ -16,10 +16,10 @@ same-window opener validated live
 activate opener → validate again → close child
 ```
 
-The raw horizontal gesture logger does not call this action yet. Its direction
-is still uncalibrated, and false-positive hardening belongs to the next step.
-Version `0.4.0` exposes the action through the isolated development API so its
-tab behavior can be tested without treating every horizontal movement as back.
+Version `0.5.0` connects this action to the conservative completed-sequence
+classifier. The connection is inactive by default and requires an explicit
+local direction calibration. The manual isolated development API remains
+available for a controlled action test without gesture classification.
 
 ## Preconditions
 
@@ -97,7 +97,7 @@ persistent browsing history.
 
 ## Controlled manual test
 
-Reload version `0.4.0` on `brave://extensions`, then open a link from an
+Reload the extension on `brave://extensions`, then open a link from an
 ordinary page into a new active child tab. In the child tab's isolated
 **Backtrack Development** DevTools context, run:
 
@@ -131,5 +131,6 @@ The isolated development action then:
 4. left the unrelated neighboring tabs unchanged.
 
 The child disappeared from Brave's tab list and the original fixture tab became
-the selected tab. The test used the explicit confirmed-action command, not the
-uncalibrated physical gesture signal.
+the selected tab. That version `0.4.0` test used the explicit confirmed-action
+command. Version `0.5.0` adds the calibrated gesture connection described in
+[gesture-safety.md](gesture-safety.md).

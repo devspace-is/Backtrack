@@ -68,6 +68,9 @@
               entryKeyPreview: shortKey(entry?.key),
               canGoBack: globalThis.navigation?.canGoBack ?? null,
               historyLength: history.length,
+              rootOverscrollBehaviorX: getComputedStyle(
+                document.documentElement,
+              ).overscrollBehaviorX,
               note: "historyLength is display-only, not a Backtrack decision signal.",
             },
             null,

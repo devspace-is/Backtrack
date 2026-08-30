@@ -84,29 +84,57 @@
     return response;
   }
 
-  async function performConfirmedBackAction(trigger = "manual-confirmed-back") {
+  async function sendBackAction(trigger, gesture, navigateInternal) {
     const snapshot = capture(trigger);
     const response = await chrome.runtime.sendMessage({
       type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
       snapshot,
+      gesture,
     });
+    let internalNavigationRequested = false;
+    if (response?.action === "USE_INTERNAL_HISTORY" && navigateInternal) {
+      try {
+        globalThis.history.back();
+        internalNavigationRequested = true;
+      } catch {
+        internalNavigationRequested = false;
+      }
+    }
     console.info(LOG_PREFIX, {
       kind: "confirmed-back-action",
       sequence: ++sequence,
       localSnapshot: snapshotApi.diagnosticView(snapshot),
       response,
+      internalNavigationRequested,
     });
-    return response;
+    return { ...response, internalNavigationRequested };
+  }
+
+  async function performConfirmedBackAction(trigger = "manual-confirmed-back") {
+    return sendBackAction(
+      trigger,
+      { source: "MANUAL_DEVELOPMENT" },
+      false,
+    );
+  }
+
+  async function requestAutomaticBackAction(gesture) {
+    return sendBackAction(
+      "automatic-back-gesture",
+      { ...gesture, source: "AUTOMATIC" },
+      true,
+    );
   }
 
   const api = Object.freeze({
-    version: "0.2.0",
+    version: "0.3.0",
     getSnapshot: () => structuredClone(lastSnapshot ?? capture("manual-snapshot")),
     getDiagnosticSnapshot: () =>
       snapshotApi.diagnosticView(lastSnapshot ?? capture("manual-diagnostic")),
     publish,
     requestBackDecision,
     performConfirmedBackAction,
+    requestAutomaticBackAction,
   });
 
   Object.defineProperty(globalThis, API_NAME, {

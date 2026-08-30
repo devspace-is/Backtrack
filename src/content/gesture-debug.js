@@ -9,7 +9,7 @@
     return;
   }
 
-  const VERSION = "0.1.0";
+  const VERSION = "0.2.0";
   const LOG_PREFIX = "[Backtrack:Gesture]";
   const SESSION_SUMMARY_PREFIX = "[Backtrack:Gesture:SessionJSON]";
   const THRESHOLD_SUMMARY_PREFIX = "[Backtrack:Gesture:ThresholdJSON]";
@@ -21,13 +21,27 @@
   });
   const PREVENT_DEFAULT_MODES = new Set(["off", "horizontal", "all"]);
   const ROOT_OVERSCROLL_MODES = new Set(["unchanged", "contain", "none"]);
+  const GESTURE_SETTINGS_KEY = "backtrack.gesture.settings";
+  const GESTURE_SETTINGS_SCHEMA_VERSION = 2;
+  const ACTION_FINISH_REASONS = new Set(["settled", "gap-before-next-event"]);
+
+  const classifier = globalThis.BacktrackGestureClassifier;
+  if (!classifier) {
+    console.info(LOG_PREFIX, {
+      kind: "initialization-error",
+      reason: "GESTURE_CLASSIFIER_UNAVAILABLE",
+    });
+    return;
+  }
 
   const DEFAULT_CONFIG = Object.freeze({
     sessionGapMs: 160,
     settleMs: 220,
-    minHorizontalDistancePx: 80,
-    minHorizontalDominanceRatio: 2.5,
-    minDirectionConsistency: 0.8,
+    minHorizontalDistancePx: 240,
+    minHorizontalDominanceRatio: 4,
+    minDirectionConsistency: 0.9,
+    minEventCount: 8,
+    minPeakHorizontalDeltaPx: 8,
     preventDefaultMode: "off",
     preventDefaultEventDominanceRatio: 1.25,
     logEveryWheelEvent: true,
@@ -44,7 +58,16 @@
   let logSequence = 0;
   let sessionSequence = 0;
   let listening = false;
+  let automaticActionInFlight = false;
+  let semanticSettingsLoaded = false;
+  let lastCompletedSession = null;
+  let semanticSettings = {
+    schemaVersion: GESTURE_SETTINGS_SCHEMA_VERSION,
+    backDirection: null,
+    automaticActionsEnabled: false,
+  };
   let requestedRootOverscrollMode = "unchanged";
+  let appliedRootOverscrollMode = null;
   /** @type {{ value: string, priority: string } | null} */
   let rootOverscrollBackup = null;
 
@@ -180,11 +203,19 @@
 
     return {
       ...describeElement(element),
+      isViewportScroller,
       overflowX: style.overflowX,
       scrollLeft: round(element.scrollLeft),
       maxScrollLeft: round(maxScrollLeft),
       canConsumeInDeltaDirection,
-      safetyPolicy: "BLOCK_CANDIDATE_WHILE_INSIDE_HORIZONTAL_SCROLLER",
+      safetyPolicy:
+        canConsumeInDeltaDirection === true
+          ? "BLOCK_SCROLL_CAN_CONSUME"
+          : canConsumeInDeltaDirection === null
+            ? "BLOCK_UNKNOWN_SCROLL_DIRECTION"
+            : isViewportScroller
+              ? "ALLOW_VIEWPORT_BOUNDARY"
+              : "BLOCK_INNER_SCROLL_EDGE",
     };
   }
 
@@ -229,6 +260,7 @@
     return {
       id: `${frameContext.instance}-${++sessionSequence}`,
       startedAtMs: now,
+      startedAtEpochMs: Date.now(),
       lastEventAtMs: now,
       eventCount: 0,
       netX: 0,
@@ -245,9 +277,15 @@
       preventDefaultAttemptCount: 0,
       preventDefaultSuccessCount: 0,
       downstreamPreventedCount: 0,
+      nonPixelDeltaModeEventCount: 0,
       horizontalScrollerEventCount: 0,
+      horizontalScrollerConsumableEventCount: 0,
+      horizontalScrollerBoundaryEventCount: 0,
+      horizontalScrollerUnknownEventCount: 0,
+      innerScrollerBoundaryEventCount: 0,
       horizontalScrollerTags: new Set(),
       modifierEventCount: 0,
+      untrustedEventCount: 0,
       possibleMomentumTailEventCount: 0,
       peakHorizontalDelta: 0,
       peakHorizontalEventIndex: 0,
@@ -257,58 +295,16 @@
   }
 
   function directionFor(value) {
-    if (value > 0) {
-      return "POSITIVE_X";
-    }
-    if (value < 0) {
-      return "NEGATIVE_X";
-    }
-    return "NONE";
+    return classifier.directionFor(value);
   }
 
   function candidateEvaluation(session) {
-    const netHorizontalDistance = Math.abs(session.netX);
-    const horizontalDominance =
-      session.absoluteY === 0 ? null : session.absoluteX / session.absoluteY;
-    const directionConsistency =
-      session.absoluteX === 0 ? 0 : netHorizontalDistance / session.absoluteX;
-    const blockers = [];
-
-    if (netHorizontalDistance < config.minHorizontalDistancePx) {
-      blockers.push("BELOW_MIN_HORIZONTAL_DISTANCE");
-    }
-    if (
-      session.absoluteX <
-      session.absoluteY * config.minHorizontalDominanceRatio
-    ) {
-      blockers.push("INSUFFICIENT_HORIZONTAL_DOMINANCE");
-    }
-    if (directionConsistency < config.minDirectionConsistency) {
-      blockers.push("INCONSISTENT_HORIZONTAL_DIRECTION");
-    }
-    if (session.horizontalScrollerEventCount > 0) {
-      blockers.push("HORIZONTAL_SCROLL_CONTEXT");
-    }
-    if (session.modifierEventCount > 0) {
-      blockers.push("MODIFIER_KEY_PRESENT");
-    }
-    if (session.downstreamPreventedCount > 0) {
-      blockers.push("PAGE_PREVENTED_DEFAULT");
-    }
-
-    return {
-      classification:
-        blockers.length === 0
-          ? `HORIZONTAL_${directionFor(session.netX)}`
-          : "NO_CANDIDATE",
-      semanticNavigationDirection: "UNCALIBRATED",
-      blockers,
-      measurements: {
-        netHorizontalDistancePx: round(netHorizontalDistance),
-        horizontalDominanceRatio: round(horizontalDominance),
-        directionConsistency: round(directionConsistency),
-      },
-    };
+    return classifier.evaluate(session, {
+      thresholds: config,
+      backDirection: semanticSettings.backDirection,
+      automaticActionsEnabled:
+        semanticSettingsLoaded && semanticSettings.automaticActionsEnabled,
+    });
   }
 
   function finishSession(reason = "manual") {
@@ -326,6 +322,7 @@
     const evaluation = candidateEvaluation(session);
     const summary = {
       sessionId: session.id,
+      startedAtEpochMs: session.startedAtEpochMs,
       reason,
       durationMs: round(session.lastEventAtMs - session.startedAtMs),
       eventCount: session.eventCount,
@@ -350,8 +347,17 @@
       },
       context: {
         horizontalScrollerEventCount: session.horizontalScrollerEventCount,
+        horizontalScrollerConsumableEventCount:
+          session.horizontalScrollerConsumableEventCount,
+        horizontalScrollerBoundaryEventCount:
+          session.horizontalScrollerBoundaryEventCount,
+        horizontalScrollerUnknownEventCount:
+          session.horizontalScrollerUnknownEventCount,
+        innerScrollerBoundaryEventCount:
+          session.innerScrollerBoundaryEventCount,
         horizontalScrollerTags: [...session.horizontalScrollerTags],
         modifierEventCount: session.modifierEventCount,
+        untrustedEventCount: session.untrustedEventCount,
         startPosition: session.startPosition,
       },
       momentum: {
@@ -362,8 +368,83 @@
       evaluation,
     };
 
+    lastCompletedSession = summary;
     record("session-end", summary, "info");
+    if (ACTION_FINISH_REASONS.has(reason)) {
+      void maybePerformAutomaticAction(summary);
+    }
     return summary;
+  }
+
+  async function maybePerformAutomaticAction(summary) {
+    if (
+      frameContext.kind !== "TOP" ||
+      !summary?.evaluation?.automaticAction?.eligible ||
+      automaticActionInFlight
+    ) {
+      return;
+    }
+
+    const root = document.documentElement;
+    const computedRootMode = root
+      ? getComputedStyle(root).overscrollBehaviorX
+      : null;
+    if (
+      requestedRootOverscrollMode !== "contain" ||
+      computedRootMode !== "contain"
+    ) {
+      record(
+        "automatic-back-action-blocked",
+        {
+          sessionId: summary.sessionId,
+          reason: "ROOT_OVERSCROLL_CONTAINMENT_NOT_CONFIRMED",
+          requestedRootOverscrollMode,
+          computedRootMode,
+        },
+        "info",
+      );
+      return;
+    }
+
+    const navigationStateApi = globalThis.BacktrackNavigationState;
+    if (typeof navigationStateApi?.requestAutomaticBackAction !== "function") {
+      record(
+        "automatic-back-action-blocked",
+        {
+          sessionId: summary.sessionId,
+          reason: "NAVIGATION_STATE_NOT_AVAILABLE",
+        },
+        "info",
+      );
+      return;
+    }
+
+    automaticActionInFlight = true;
+    try {
+      const response = await navigationStateApi.requestAutomaticBackAction({
+        id: summary.sessionId,
+        observedAtMs: summary.startedAtEpochMs,
+      });
+      record(
+        "automatic-back-action",
+        { sessionId: summary.sessionId, response },
+        "info",
+      );
+    } catch {
+      record(
+        "automatic-back-action",
+        {
+          sessionId: summary.sessionId,
+          response: {
+            action: "NO_SPECIAL_ACTION",
+            reason: "INTERNAL_ERROR",
+          },
+        },
+        "info",
+      );
+    } finally {
+      automaticActionInFlight = false;
+    }
   }
 
   function scheduleSessionFinish() {
@@ -444,17 +525,35 @@
     session.maxAbsoluteY = Math.max(session.maxAbsoluteY, absoluteY);
     session.positiveX += Math.max(0, normalized.x);
     session.negativeX += Math.min(0, normalized.x);
-    session.deltaModes.add(DELTA_MODE_NAMES[event.deltaMode] ?? `UNKNOWN_${event.deltaMode}`);
+    session.deltaModes.add(
+      DELTA_MODE_NAMES[event.deltaMode] ?? `UNKNOWN_${event.deltaMode}`,
+    );
+    if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) {
+      session.nonPixelDeltaModeEventCount += 1;
+    }
     session.cancelableCount += event.cancelable ? 1 : 0;
     session.nonCancelableCount += event.cancelable ? 0 : 1;
 
     if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) {
       session.modifierEventCount += 1;
     }
+    if (!event.isTrusted) {
+      session.untrustedEventCount += 1;
+    }
 
     if (horizontalScrollContext) {
       session.horizontalScrollerEventCount += 1;
       session.horizontalScrollerTags.add(horizontalScrollContext.tag);
+      if (horizontalScrollContext.canConsumeInDeltaDirection === true) {
+        session.horizontalScrollerConsumableEventCount += 1;
+      } else if (horizontalScrollContext.canConsumeInDeltaDirection === false) {
+        session.horizontalScrollerBoundaryEventCount += 1;
+        if (!horizontalScrollContext.isViewportScroller) {
+          session.innerScrollerBoundaryEventCount += 1;
+        }
+      } else {
+        session.horizontalScrollerUnknownEventCount += 1;
+      }
     }
 
     if (!session.startPosition) {
@@ -557,12 +656,14 @@
     }
 
     const evaluation = candidateEvaluation(session);
-    const thresholdOnlyBlockers = evaluation.blockers.filter(
-      (blocker) =>
-        ![
-          "HORIZONTAL_SCROLL_CONTEXT",
-          "PAGE_PREVENTED_DEFAULT",
-        ].includes(blocker),
+    const thresholdOnlyBlockers = evaluation.blockers.filter((blocker) =>
+      [
+        "BELOW_MIN_HORIZONTAL_DISTANCE",
+        "INSUFFICIENT_HORIZONTAL_DOMINANCE",
+        "INCONSISTENT_HORIZONTAL_DIRECTION",
+        "TOO_FEW_EVENTS",
+        "PEAK_HORIZONTAL_DELTA_TOO_SMALL",
+      ].includes(blocker),
     );
     if (!session.thresholdReported && thresholdOnlyBlockers.length === 0) {
       session.thresholdReported = true;
@@ -572,8 +673,10 @@
         {
           sessionId: session.id,
           provisionalDirection: directionFor(session.netX),
-          semanticNavigationDirection: "UNCALIBRATED",
-          notice: "Research signal only. No navigation action is performed.",
+          semanticNavigationDirection:
+            evaluation.semanticNavigationDirection,
+          notice:
+            "Provisional research signal only. Any automatic action waits for the completed session and all safety checks.",
           evaluation,
           navigationState:
             navigationStateApi?.getDiagnosticSnapshot?.() ?? {
@@ -583,36 +686,6 @@
         },
         "info",
       );
-
-      if (navigationStateApi?.requestBackDecision) {
-        void navigationStateApi
-          .requestBackDecision("gesture-threshold")
-          .then((decision) => {
-            record(
-              "back-decision",
-              {
-                sessionId: session.id,
-                decision,
-                notice: "Diagnostic only. No history or tab action is performed.",
-              },
-              "info",
-            );
-          })
-          .catch(() => {
-            record(
-              "back-decision",
-              {
-                sessionId: session.id,
-                decision: {
-                  decision: "NO_SPECIAL_ACTION",
-                  reason: "INTERNAL_ERROR",
-                },
-                notice: "Diagnostic only. No history or tab action is performed.",
-              },
-              "info",
-            );
-          });
-      }
     }
 
     queueMicrotask(() => {
@@ -679,8 +752,8 @@
       );
     }
 
-    requestedRootOverscrollMode = mode;
     const root = document.documentElement;
+    requestedRootOverscrollMode = mode;
     if (!root) {
       document.addEventListener(
         "DOMContentLoaded",
@@ -698,18 +771,27 @@
     }
 
     if (mode === "unchanged") {
-      if (rootOverscrollBackup.value) {
-        root.style.setProperty(
-          "overscroll-behavior-x",
-          rootOverscrollBackup.value,
-          rootOverscrollBackup.priority,
-        );
-      } else {
-        root.style.removeProperty("overscroll-behavior-x");
+      const stillOwnsInlineValue =
+        appliedRootOverscrollMode !== null &&
+        root.style.getPropertyValue("overscroll-behavior-x") ===
+          appliedRootOverscrollMode &&
+        root.style.getPropertyPriority("overscroll-behavior-x") === "important";
+      if (stillOwnsInlineValue) {
+        if (rootOverscrollBackup.value) {
+          root.style.setProperty(
+            "overscroll-behavior-x",
+            rootOverscrollBackup.value,
+            rootOverscrollBackup.priority,
+          );
+        } else {
+          root.style.removeProperty("overscroll-behavior-x");
+        }
       }
       rootOverscrollBackup = null;
+      appliedRootOverscrollMode = null;
     } else {
       root.style.setProperty("overscroll-behavior-x", mode, "important");
+      appliedRootOverscrollMode = mode;
     }
 
     record(
@@ -722,6 +804,88 @@
       "info",
     );
     return mode;
+  }
+
+  function normalizeSemanticSettings(value) {
+    const backDirection =
+      value?.schemaVersion === GESTURE_SETTINGS_SCHEMA_VERSION &&
+      (value?.backDirection === classifier.DIRECTIONS.POSITIVE_X ||
+        value?.backDirection === classifier.DIRECTIONS.NEGATIVE_X)
+        ? value.backDirection
+        : null;
+    return {
+      schemaVersion: GESTURE_SETTINGS_SCHEMA_VERSION,
+      backDirection,
+      automaticActionsEnabled:
+        backDirection !== null && value?.automaticActionsEnabled === true,
+    };
+  }
+
+  function applySemanticSettings(value, source) {
+    semanticSettings = normalizeSemanticSettings(value);
+    semanticSettingsLoaded = true;
+    if (frameContext.kind === "TOP") {
+      applyRootOverscrollBehavior(
+        semanticSettings.automaticActionsEnabled ? "contain" : "unchanged",
+      );
+    }
+    record(
+      "semantic-settings-change",
+      {
+        source,
+        settings: { ...semanticSettings },
+        notice:
+          semanticSettings.automaticActionsEnabled
+            ? "Automatic back actions are enabled for the calibrated direction."
+            : "Automatic back actions remain disabled.",
+      },
+      "info",
+    );
+    return { ...semanticSettings };
+  }
+
+  async function loadSemanticSettings() {
+    try {
+      const stored = await chrome.storage.local.get(GESTURE_SETTINGS_KEY);
+      return applySemanticSettings(
+        stored?.[GESTURE_SETTINGS_KEY],
+        "storage-load",
+      );
+    } catch {
+      return applySemanticSettings(null, "storage-load-failed");
+    }
+  }
+
+  async function calibrateBackDirection(direction) {
+    if (
+      direction !== classifier.DIRECTIONS.POSITIVE_X &&
+      direction !== classifier.DIRECTIONS.NEGATIVE_X
+    ) {
+      throw new TypeError(
+        'Back direction must be "POSITIVE_X" or "NEGATIVE_X".',
+      );
+    }
+    const next = normalizeSemanticSettings({
+      schemaVersion: GESTURE_SETTINGS_SCHEMA_VERSION,
+      backDirection: direction,
+      automaticActionsEnabled: true,
+    });
+    await chrome.storage.local.set({ [GESTURE_SETTINGS_KEY]: next });
+    return applySemanticSettings(next, "manual-calibration");
+  }
+
+  async function disableAutomaticActions() {
+    const next = normalizeSemanticSettings({
+      ...semanticSettings,
+      automaticActionsEnabled: false,
+    });
+    await chrome.storage.local.set({ [GESTURE_SETTINGS_KEY]: next });
+    return applySemanticSettings(next, "manual-disable");
+  }
+
+  async function clearCalibration() {
+    await chrome.storage.local.remove(GESTURE_SETTINGS_KEY);
+    return applySemanticSettings(null, "manual-calibration-clear");
   }
 
   function start() {
@@ -741,7 +905,7 @@
         listener: { target: "window", capture: true, passive: false },
         config: { ...config },
         notice:
-          "Directions are intentionally uncalibrated; this gesture logger never requests a tab or history action.",
+          "Automatic actions are disabled until a back direction is explicitly calibrated.",
       },
       "info",
     );
@@ -776,6 +940,10 @@
       listening,
       frame: { ...frameContext },
       activeSessionId: activeSession?.id ?? null,
+      lastCompletedSessionId: lastCompletedSession?.sessionId ?? null,
+      automaticActionInFlight,
+      semanticSettingsLoaded,
+      semanticSettings: { ...semanticSettings },
       bufferedEntries: logBuffer.length,
       rootOverscrollMode: requestedRootOverscrollMode,
     }),
@@ -783,6 +951,10 @@
     exportJson: () => JSON.stringify(logBuffer, null, 2),
     finishSession,
     clearLog,
+    getSemanticSettings: () => ({ ...semanticSettings }),
+    calibrateBackDirection,
+    disableAutomaticActions,
+    clearCalibration,
     setRootOverscrollBehavior: applyRootOverscrollBehavior,
     start,
     stop,
@@ -803,5 +975,16 @@
     { capture: true },
   );
 
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local" || !(GESTURE_SETTINGS_KEY in changes)) {
+      return;
+    }
+    applySemanticSettings(
+      changes[GESTURE_SETTINGS_KEY].newValue,
+      "storage-change",
+    );
+  });
+
   start();
+  void loadSemanticSettings();
 })();

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Backtrack Development",
-  "version": "0.4.0",
-  "description": "Local development build for safe Atlas-like back navigation across tabs.",
+  "version": "0.5.0",
+  "description": "Conservative Atlas-like back navigation across tabs for Brave and Chrome.",
   "permissions": [
     "storage"
   ],
@@ -17,6 +17,7 @@
         "https://*/*"
       ],
       "js": [
+        "src/shared/gesture-classifier.js",
         "src/shared/navigation-snapshot.js",
         "src/content/navigation-state.js",
         "src/content/gesture-debug.js"

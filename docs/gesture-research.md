@@ -366,6 +366,28 @@ Backtrack must be tested with real tables, carousels, Kanban boards, multiple
 Brave/Chromium versions, and additional trackpads. An unclear scroll context
 must always result in no action and, in particular, no tab closure.
 
+## Phase 2 safety implementation addendum
+
+Development version `0.5.0` implements the conservative policy derived from
+this evidence without changing the historical Phase 1 measurements above:
+
+- physical X signs remain semantically unassigned until explicit local
+  calibration;
+- automatic behavior is disabled by default;
+- root containment is applied only while calibrated automatic behavior is
+  enabled and is checked again before action;
+- a full sequence must reach 240 horizontal pixels, 4:1 axis dominance, 90%
+  directional consistency, 8 pixel-mode events, and an 8-pixel peak;
+- consumable or ambiguous horizontal scroll contexts are rejected;
+- inner horizontal scrollers remain blocked even at their edge;
+- action occurs only after sequence completion;
+- a session-backed 1.8-second per-tab gate rejects duplicate IDs and split
+  momentum tails.
+
+This is implementation progress, not new physical-trackpad evidence and not a
+production Go. The extended real-site and multi-configuration matrix remains
+open. See [gesture-safety.md](gesture-safety.md) for the exact policy.
+
 ## Smallest alternatives if the result turns negative
 
 Evaluate only; do not implement without separate approval:

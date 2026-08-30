@@ -76,7 +76,10 @@ test("a confirmed action message closes only an eligible sender child", async ()
     },
     async update(tabId, patch) {
       for (const [id, item] of tabs) {
-        tabs.set(id, { ...item, active: id === tabId && patch.active === true });
+        tabs.set(id, {
+          ...item,
+          active: id === tabId && patch.active === true,
+        });
       }
       return structuredClone(tabs.get(tabId));
     },
@@ -100,6 +103,7 @@ test("a confirmed action message closes only an eligible sender child", async ()
       {
         type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
         snapshot: { currentEntryKey: "entry-a" },
+        gesture: { source: "MANUAL_DEVELOPMENT" },
       },
       { tab: structuredClone(tabs.get(20)) },
       resolve,
@@ -110,4 +114,143 @@ test("a confirmed action message closes only an eligible sender child", async ()
   assert.equal(response.action, "RETURNED_TO_OPENER");
   assert.equal(tabs.has(20), false);
   assert.equal(tabs.get(10).active, true);
+});
+
+test("an accepted automatic gesture passes the gate before acting", async () => {
+  const tabs = new Map([
+    [
+      10,
+      {
+        id: 10,
+        windowId: 2,
+        active: false,
+        pinned: false,
+        discarded: false,
+        incognito: false,
+        groupId: -1,
+      },
+    ],
+    [
+      20,
+      {
+        id: 20,
+        openerTabId: 10,
+        windowId: 2,
+        active: true,
+        pinned: false,
+        discarded: false,
+        incognito: false,
+        groupId: -1,
+      },
+    ],
+  ]);
+  const tabsApi = {
+    async get(tabId) {
+      if (!tabs.has(tabId)) {
+        throw new Error("missing tab");
+      }
+      return structuredClone(tabs.get(tabId));
+    },
+    async update(tabId, patch) {
+      for (const [id, item] of tabs) {
+        tabs.set(id, { ...item, active: id === tabId && patch.active === true });
+      }
+      return structuredClone(tabs.get(tabId));
+    },
+    async remove(tabId) {
+      tabs.delete(tabId);
+    },
+  };
+  const tracker = {
+    async recordSnapshot() {},
+    async assess() {
+      return {
+        availability: NAVIGATION_AVAILABILITY.AT_ENTRY_POINT,
+        reason: "TRACKED_ENTRY_POINT",
+      };
+    },
+  };
+  let claimed = null;
+  const gate = {
+    async claim(tabId, gesture) {
+      claimed = { tabId, gesture };
+      return { ok: true, reason: "ACCEPTED" };
+    },
+  };
+  const listener = createNavigationMessageListener(tabsApi, tracker, gate);
+  const gesture = {
+    source: "AUTOMATIC",
+    id: "gesture-1",
+    observedAtMs: 10_000,
+  };
+
+  const response = await new Promise((resolve) => {
+    listener(
+      {
+        type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
+        snapshot: { currentEntryKey: "entry-a" },
+        gesture,
+      },
+      { tab: structuredClone(tabs.get(20)) },
+      resolve,
+    );
+  });
+
+  assert.deepEqual(claimed, { tabId: 20, gesture });
+  assert.equal(response.action, "RETURNED_TO_OPENER");
+  assert.equal(tabs.has(20), false);
+});
+
+test("duplicate and unsupported automatic action requests fail closed", async (t) => {
+  await t.test("deduplicated gesture", async () => {
+    let tabApiUsed = false;
+    const tabsApi = {
+      async get() {
+        tabApiUsed = true;
+        throw new Error("must not be called");
+      },
+    };
+    const gate = {
+      async claim() {
+        return { ok: false, reason: "COOLDOWN_ACTIVE" };
+      },
+    };
+    const listener = createNavigationMessageListener(tabsApi, {}, gate);
+    const response = await new Promise((resolve) => {
+      listener(
+        {
+          type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
+          snapshot: {},
+          gesture: {
+            source: "AUTOMATIC",
+            id: "gesture-tail",
+            observedAtMs: 10_100,
+          },
+        },
+        { tab: { id: 20 } },
+        resolve,
+      );
+    });
+
+    assert.equal(response.reason, "GESTURE_DEDUPLICATED");
+    assert.equal(response.gestureGate.reason, "COOLDOWN_ACTIVE");
+    assert.equal(tabApiUsed, false);
+  });
+
+  await t.test("unknown source", async () => {
+    const listener = createNavigationMessageListener({}, {});
+    const response = await new Promise((resolve) => {
+      listener(
+        {
+          type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
+          snapshot: {},
+          gesture: { source: "PAGE_SCRIPT" },
+        },
+        { tab: { id: 20 } },
+        resolve,
+      );
+    });
+
+    assert.equal(response.reason, "UNSUPPORTED_ACTION_SOURCE");
+  });
 });

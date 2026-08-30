@@ -2,7 +2,11 @@ import { evaluateBackDecision } from "./back-decision.js";
 import { performConfirmedBackAction } from "./tab-action.js";
 import { MESSAGE_TYPES } from "../shared/messages.js";
 
-export function createNavigationMessageListener(tabsApi, navigationTracker) {
+export function createNavigationMessageListener(
+  tabsApi,
+  navigationTracker,
+  gestureActionGate = null,
+) {
   return (message, sender, sendResponse) => {
     if (message?.type === MESSAGE_TYPES.NAVIGATION_SNAPSHOT) {
       navigationTracker
@@ -32,12 +36,41 @@ export function createNavigationMessageListener(tabsApi, navigationTracker) {
     }
 
     if (message?.type === MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION) {
-      performConfirmedBackAction(
-        sender?.tab,
-        message.snapshot,
-        tabsApi,
-        navigationTracker,
-      )
+      const runAction = async () => {
+        if (message?.gesture?.source === "AUTOMATIC") {
+          if (!gestureActionGate) {
+            return {
+              action: "NO_SPECIAL_ACTION",
+              reason: "GESTURE_GATE_UNAVAILABLE",
+            };
+          }
+          const claim = await gestureActionGate.claim(
+            sender?.tab?.id,
+            message.gesture,
+          );
+          if (!claim.ok) {
+            return {
+              action: "NO_SPECIAL_ACTION",
+              reason: "GESTURE_DEDUPLICATED",
+              gestureGate: claim,
+            };
+          }
+        } else if (message?.gesture?.source !== "MANUAL_DEVELOPMENT") {
+          return {
+            action: "NO_SPECIAL_ACTION",
+            reason: "UNSUPPORTED_ACTION_SOURCE",
+          };
+        }
+
+        return performConfirmedBackAction(
+          sender?.tab,
+          message.snapshot,
+          tabsApi,
+          navigationTracker,
+        );
+      };
+
+      runAction()
         .then(sendResponse)
         .catch(() =>
           sendResponse({
