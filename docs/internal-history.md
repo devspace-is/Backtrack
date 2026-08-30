@@ -13,12 +13,13 @@ Backtrack returns one of three conservative decisions:
 
 | Decision | Meaning in this version |
 | --- | --- |
-| `USE_INTERNAL_HISTORY` | The tab is beyond its entry point. A later action step should navigate back inside the tab first. |
-| `RETURN_TO_OPENER_ELIGIBLE` | The tab is back at the captured entry point and its opener is still safe. A later action step may consider returning to the opener. |
+| `USE_INTERNAL_HISTORY` | The tab is beyond its entry point. The tab-action layer must leave the tabs untouched so internal back navigation wins. |
+| `RETURN_TO_OPENER_ELIGIBLE` | The tab is back at the captured entry point and its opener is still safe. The guarded tab-action layer may revalidate and return to the opener. |
 | `NO_SPECIAL_ACTION` | The state is unclear or unsafe. Backtrack must not take control. |
 
-This version performs none of those actions. It does not call `history.back()`,
-activate a tab, or close a tab.
+The decision function itself performs none of those actions. Since version
+`0.4.0`, the separate guarded tab-action layer may consume
+`RETURN_TO_OPENER_ELIGIBLE`; it never acts on the other two decisions.
 
 ## Why `history.length` is insufficient
 
@@ -131,6 +132,11 @@ Backtrack returns `NO_SPECIAL_ACTION`, among other cases, when:
 A tab that was already open when the extension was reloaded is not adopted
 retroactively. Backtrack cannot prove its real entry point and therefore does
 not invent one.
+
+A manual decision or action request also cannot establish a missing baseline.
+Only the passive navigation snapshot sent as the tracked child loads may
+capture its entry point. This prevents a late request on a page reached after
+several navigations from being mistaken for the original child entry.
 
 ## Local test
 

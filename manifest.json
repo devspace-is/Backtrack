@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Backtrack Development",
-  "version": "0.3.0",
-  "description": "Local development build for safe opener and internal-history navigation research.",
+  "version": "0.4.0",
+  "description": "Local development build for safe Atlas-like back navigation across tabs.",
   "permissions": [
     "storage"
   ],

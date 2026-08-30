@@ -47,7 +47,7 @@ function blocked(reason, currentTab, openerTab = null) {
  * Resolve one exact opener relationship without storing a tab tree.
  *
  * The result intentionally excludes URLs, titles, favicons, and page content.
- * A later action must resolve this relationship again immediately before it
+ * Any action must resolve this relationship again immediately before it
  * focuses or closes a tab because browser state can change at any time.
  *
  * @param {Record<string, unknown> | undefined} currentTab

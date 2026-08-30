@@ -21,17 +21,21 @@ planning are maintained in English.
 
 ## Current status
 
-**Phase 2, two bounded components complete.**
+**Phase 2, three bounded components complete.**
 
 The Phase 1 gesture proof of concept remains available. A Manifest V3 service
 worker now validates whether a newly opened tab has a still-existing,
 unambiguous opener (`openerTabId`) in the same browser window. Backtrack also
 distinguishes meaningful internal history from the captured child-tab entry
 point across full-document navigation and single-page applications that use
-`history.pushState()` or `history.replaceState()`.
+`history.pushState()` or `history.replaceState()`. A guarded action layer can
+now activate a freshly revalidated opener and close its child tab at the
+tracked entry point.
 
-The extension currently returns diagnostic decisions only. It does not
-navigate browser history, activate tabs, or close tabs.
+Automatic tab action from a physical swipe remains disabled. Gesture direction
+is still deliberately uncalibrated and must be hardened in the next step. The
+action can currently be invoked only through the isolated development API for
+a controlled test.
 
 Real trackpad measurements produced a **Conditional Go** for a bounded Phase 2
 prototype:
@@ -60,7 +64,8 @@ src/
 │   ├── navigation-tracker.js
 │   ├── opener-message-handler.js
 │   ├── opener-resolver.js
-│   └── service-worker.js
+│   ├── service-worker.js
+│   └── tab-action.js
 ├── content/
 │   ├── gesture-debug.js
 │   └── navigation-state.js
@@ -72,14 +77,16 @@ docs/
 ├── gesture-research.md
 ├── internal-history.md
 ├── navigation-fixture.html
-└── opener-safety.md
+├── opener-safety.md
+└── tab-action.md
 tests/
 ├── back-decision.test.js
 ├── navigation-message-handler.test.js
 ├── navigation-snapshot.test.js
 ├── navigation-tracker.test.js
 ├── opener-message-handler.test.js
-└── opener-resolver.test.js
+├── opener-resolver.test.js
+└── tab-action.test.js
 ```
 
 There is deliberately no build step and no external dependency. Brave can
@@ -116,8 +123,8 @@ performs navigation.
 
 The background process validates `openerTabId` without requesting the broad
 `tabs` permission. It rejects missing, closed, moved, discarded, pinned-child,
-or cross-context relationships. The same relationship must be validated again
-immediately before any future tab action.
+or cross-context relationships. The same relationship is validated again
+immediately before activation and immediately before child-tab closure.
 
 See [opener-safety.md](docs/opener-safety.md).
 
@@ -140,6 +147,17 @@ missing or contradictory evidence
 
 `history.length` is logged for diagnostics only and is never used as the sole
 decision signal. See [internal-history.md](docs/internal-history.md).
+
+### Guarded tab action
+
+`src/background/tab-action.js` consumes only a confirmed semantic back request.
+It takes control only when the decision layer reports the exact tracked entry
+point and a live, same-window opener. It activates the opener first, validates
+the relationship once more, and only then closes the child. If closing fails,
+it attempts to restore focus to the still-open child.
+
+The raw gesture logger does not call this action yet. See
+[tab-action.md](docs/tab-action.md).
 
 ## Debugging
 
@@ -185,7 +203,7 @@ Possible results:
 - `NO_SPECIAL_ACTION`: evidence is missing or contradictory, or the opener is
   no longer safe.
 
-All three are diagnostic-only in version `0.3.0`.
+This method remains diagnostic-only.
 
 The manual Brave `152.1.94.117` smoke test on August 30, 2026 covered:
 
@@ -200,6 +218,32 @@ child entry
 
 The decision changed from `USE_INTERNAL_HISTORY` to
 `RETURN_TO_OPENER_ELIGIBLE` only when the real child entry was reached.
+
+### Run the guarded action manually
+
+For a controlled version `0.4.0` smoke test, open a fresh child tab from an
+ordinary `http://` or `https://` page. In the child tab's isolated **Backtrack
+Development** DevTools context, run:
+
+```js
+BacktrackNavigationState.performConfirmedBackAction()
+```
+
+This command can close the current child tab. It returns one of:
+
+- `RETURNED_TO_OPENER`: the opener was activated and the child was closed;
+- `USE_INTERNAL_HISTORY`: the child still has internal back history, so no tab
+  action occurred;
+- `NO_SPECIAL_ACTION`: the relationship or navigation state was unsafe or an
+  API step failed.
+
+This development command stands in for an already confirmed semantic back
+gesture. The uncalibrated `threshold-crossed` signal never calls it.
+
+The successful controlled run used Brave `152.1.94.117` on macOS `26.6.2`: a
+fresh fixture child closed and its exact opener became the visibly selected
+tab. See [tab-action.md](docs/tab-action.md) for the action order and failure
+behavior.
 
 ## Gesture log format
 
@@ -368,7 +412,7 @@ These are research starting values, not production gesture detection.
 | Access | Why needed? | Can it be avoided? | Theoretical data access |
 | --- | --- | --- | --- |
 | `storage` | `chrome.storage.session` keeps the opaque child entry key in memory when Chromium suspends and restarts the short-lived service worker. | Not safely. A lost entry must not be replaced with an invented baseline. | The permission could also allow persistent extension storage. Backtrack uses only volatile session storage and stores no URLs, titles, or content. |
-| No `tabs` permission | The background uses `chrome.tabs.onCreated` and `chrome.tabs.get()` only for non-sensitive fields such as IDs, window, pinned/grouped state, and `openerTabId`. | Already avoided. | Without `tabs`, the API does not expose privileged URL, title, or favicon fields to Backtrack. |
+| No `tabs` permission | The background uses tab lifecycle events plus `chrome.tabs.get()`, `chrome.tabs.update()`, and `chrome.tabs.remove()` for IDs, state validation, activation, and exact child closure. These operations do not require the broad permission. | Already avoided. | Without `tabs`, the API does not expose privileged URL, title, or favicon fields to Backtrack. |
 | No `webNavigation` permission | Full-document and SPA changes are observed through the Navigation API in the content script. | Already avoided. | Backtrack gains no additional extension-level navigation event or address access. |
 | Automatic content script on `http://*/*` and `https://*/*` | Gesture and history changes must be observed early across ordinary websites. | An `activeTab` research build is possible but would require a toolbar action, service worker, and an extra step on every page. Reassess before production. | A content script could theoretically read or alter page DOM. Backtrack processes only event, geometry, scroll-context, and opaque navigation-entry data. It logs no URL and contacts no server. |
 
@@ -388,6 +432,8 @@ only when their own address matches `http://` or `https://`.
 - Measurement buffers in embedded frames are separate.
 - X directions are not yet calibrated semantically as `BACK_GESTURE` and
   `FORWARD_GESTURE`.
+- The guarded tab action is not connected to the uncalibrated physical gesture
+  signal yet.
 - Tabs open before the extension is loaded or reloaded receive no invented
   entry point.
 - Browser or extension restart clears volatile history state; affected tabs
@@ -410,9 +456,9 @@ only when their own address matches `http://` or `https://`.
 
 ## Deliberately not included yet
 
-- calls to `chrome.tabs.remove()` or `chrome.tabs.update()`;
-- actual back navigation inside the child tab;
-- opener activation or child-tab closure;
+- automatic tab action from an uncalibrated physical swipe;
+- explicit internal back navigation by the extension when the browser does not
+  already perform it;
 - a persistently stored tab tree or browser history;
 - an options page;
 - telemetry, server access, or persistent storage.

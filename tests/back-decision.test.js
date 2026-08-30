@@ -104,3 +104,29 @@ test("an invalid opener prevents any special navigation decision", async () => {
   assert.equal(result.decision, BACK_DECISIONS.NO_SPECIAL_ACTION);
   assert.equal(trackerCalled, false);
 });
+
+test("a decision request cannot invent a missing entry baseline", async () => {
+  let snapshotRecorded = false;
+  const tracker = {
+    async assess() {
+      return {
+        availability: NAVIGATION_AVAILABILITY.UNKNOWN,
+        reason: "AWAITING_ENTRY",
+      };
+    },
+    async recordSnapshot() {
+      snapshotRecorded = true;
+    },
+  };
+
+  const result = await evaluateBackDecision(
+    currentTab(),
+    { currentEntryKey: "late-entry" },
+    tabsApi(opener),
+    tracker,
+  );
+
+  assert.equal(result.decision, BACK_DECISIONS.NO_SPECIAL_ACTION);
+  assert.equal(result.reason, "AWAITING_ENTRY");
+  assert.equal(snapshotRecorded, false);
+});

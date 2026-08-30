@@ -741,7 +741,7 @@
         listener: { target: "window", capture: true, passive: false },
         config: { ...config },
         notice:
-          "Directions are intentionally uncalibrated; no tab or history action exists in this PoC.",
+          "Directions are intentionally uncalibrated; this gesture logger never requests a tab or history action.",
       },
       "info",
     );

@@ -1,4 +1,5 @@
 import { evaluateBackDecision } from "./back-decision.js";
+import { performConfirmedBackAction } from "./tab-action.js";
 import { MESSAGE_TYPES } from "../shared/messages.js";
 
 export function createNavigationMessageListener(tabsApi, navigationTracker) {
@@ -23,7 +24,25 @@ export function createNavigationMessageListener(tabsApi, navigationTracker) {
           sendResponse({
             decision: "NO_SPECIAL_ACTION",
             reason: "INTERNAL_ERROR",
-            notice: "Diagnostic only; no history or tab action was performed.",
+            notice:
+              "Decision evaluation only; no history or tab action was performed.",
+          }),
+        );
+      return true;
+    }
+
+    if (message?.type === MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION) {
+      performConfirmedBackAction(
+        sender?.tab,
+        message.snapshot,
+        tabsApi,
+        navigationTracker,
+      )
+        .then(sendResponse)
+        .catch(() =>
+          sendResponse({
+            action: "NO_SPECIAL_ACTION",
+            reason: "INTERNAL_ERROR",
           }),
         );
       return true;

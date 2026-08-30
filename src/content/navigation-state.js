@@ -12,6 +12,7 @@
   const MESSAGE_TYPES = Object.freeze({
     NAVIGATION_SNAPSHOT: "BACKTRACK_NAVIGATION_SNAPSHOT",
     GET_BACK_DECISION: "BACKTRACK_GET_BACK_DECISION",
+    PERFORM_CONFIRMED_BACK_ACTION: "BACKTRACK_PERFORM_CONFIRMED_BACK_ACTION",
   });
 
   if (Object.prototype.hasOwnProperty.call(globalThis, API_NAME)) {
@@ -83,13 +84,29 @@
     return response;
   }
 
+  async function performConfirmedBackAction(trigger = "manual-confirmed-back") {
+    const snapshot = capture(trigger);
+    const response = await chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
+      snapshot,
+    });
+    console.info(LOG_PREFIX, {
+      kind: "confirmed-back-action",
+      sequence: ++sequence,
+      localSnapshot: snapshotApi.diagnosticView(snapshot),
+      response,
+    });
+    return response;
+  }
+
   const api = Object.freeze({
-    version: "0.1.0",
+    version: "0.2.0",
     getSnapshot: () => structuredClone(lastSnapshot ?? capture("manual-snapshot")),
     getDiagnosticSnapshot: () =>
       snapshotApi.diagnosticView(lastSnapshot ?? capture("manual-diagnostic")),
     publish,
     requestBackDecision,
+    performConfirmedBackAction,
   });
 
   Object.defineProperty(globalThis, API_NAME, {

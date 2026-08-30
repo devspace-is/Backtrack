@@ -20,7 +20,22 @@ export async function evaluateBackDecision(
       reason: opener.reason,
       opener,
       navigation: null,
-      notice: "Diagnostic only; no history or tab action was performed.",
+      notice: "Decision evaluation only; no history or tab action was performed.",
+    };
+  }
+
+  const trackedBeforeRequest = await navigationTracker.assess(
+    currentTab.id,
+    liveSnapshot,
+  );
+  if (trackedBeforeRequest.availability === NAVIGATION_AVAILABILITY.UNKNOWN) {
+    return {
+      decision: BACK_DECISIONS.NO_SPECIAL_ACTION,
+      reason: trackedBeforeRequest.reason,
+      opener,
+      navigation: trackedBeforeRequest,
+      notice:
+        "Decision requests never invent a missing child-tab entry point.",
     };
   }
 
@@ -44,6 +59,6 @@ export async function evaluateBackDecision(
     reason: navigation.reason,
     opener,
     navigation,
-    notice: "Diagnostic only; no history or tab action was performed.",
+    notice: "Decision evaluation only; no history or tab action was performed.",
   };
 }
