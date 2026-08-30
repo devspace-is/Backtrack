@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -93,66 +93,44 @@
     <main>
       <h1>Backtrack Gesture Test Fixture</h1>
       <p>
-        Lokale Testseite für echte Trackpad-Eingaben. Keine externen Ressourcen,
-        keine Netzwerkübertragung und keine eigene Gestenlogik.
+        Local test page for real trackpad input. No external resources, no
+        network transmission, and no gesture logic of its own.
       </p>
 
       <section class="panel" aria-labelledby="vertical-heading">
-        <h2 id="vertical-heading">Vertikaler Testbereich</h2>
+        <h2 id="vertical-heading">Vertical test area</h2>
         <p>
-          Der Mauszeiger bleibt außerhalb des blauen horizontalen Bereichs.
-          Normales Scrollen nach oben und unten darf keinen horizontalen
-          Kandidaten auslösen.
+          Keep the pointer outside the blue horizontal area. Normal upward and
+          downward scrolling must not create a horizontal candidate.
         </p>
         <div class="vertical-marker">
-          <p>Hier vertikal scrollen<br><code>B1 / B2</code></p>
+          <p>Scroll vertically here<br><code>B1 / B2</code></p>
         </div>
       </section>
 
       <section class="panel" aria-labelledby="horizontal-heading">
-        <h2 id="horizontal-heading">Horizontaler Testbereich</h2>
+        <h2 id="horizontal-heading">Horizontal test area</h2>
         <p>
-          Innerhalb des blauen Rahmens horizontal wischen. Der Scrollbereich
-          beginnt bewusst in einer mittleren Position und kann die Bewegung in
-          beide Richtungen aufnehmen.
+          Swipe horizontally inside the blue frame. The scroll area starts in
+          the middle so it can accept movement in both directions.
         </p>
         <div
           class="horizontal-scroller"
           id="horizontal-scroller"
           tabindex="0"
-          aria-label="Horizontal scrollbarer Testbereich"
+          aria-label="Horizontally scrollable test area"
         >
           <div class="horizontal-track">
-            <article class="card">
-              <strong>Karte 1</strong>Start des Bereichs
-            </article>
-            <article class="card">
-              <strong>Karte 2</strong>Horizontale Inhalte
-            </article>
-            <article class="card">
-              <strong>Karte 3</strong>Vor der Startposition
-            </article>
-            <article class="card">
-              <strong>Karte 4</strong>Startposition
-            </article>
-            <article class="card">
-              <strong>Karte 5</strong>Bewegung aufnehmen
-            </article>
-            <article class="card">
-              <strong>Karte 6</strong>Kein Back-Kandidat
-            </article>
-            <article class="card">
-              <strong>Karte 7</strong>Scrollkontext erkennen
-            </article>
-            <article class="card">
-              <strong>Karte 8</strong>Weiter nach rechts
-            </article>
-            <article class="card">
-              <strong>Karte 9</strong>Nahe am Ende
-            </article>
-            <article class="card">
-              <strong>Karte 10</strong>Ende des Bereichs
-            </article>
+            <article class="card"><strong>Card 1</strong>Start of the area</article>
+            <article class="card"><strong>Card 2</strong>Horizontal content</article>
+            <article class="card"><strong>Card 3</strong>Before the start position</article>
+            <article class="card"><strong>Card 4</strong>Start position</article>
+            <article class="card"><strong>Card 5</strong>Accept movement</article>
+            <article class="card"><strong>Card 6</strong>Not a back candidate</article>
+            <article class="card"><strong>Card 7</strong>Detect scroll context</article>
+            <article class="card"><strong>Card 8</strong>Continue to the right</article>
+            <article class="card"><strong>Card 9</strong>Near the end</article>
+            <article class="card"><strong>Card 10</strong>End of the area</article>
           </div>
         </div>
       </section>

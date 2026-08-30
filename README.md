@@ -1,378 +1,418 @@
 # Backtrack
 
-Backtrack untersucht, ob sich die normale horizontale Zwei-Finger-Geste von
-Brave unter macOS in einer Chromium-Erweiterung zuverlässig erkennen lässt.
+Backtrack explores Atlas-like back navigation across tabs in Brave and other
+Chromium browsers on macOS.
 
-## Aktueller Stand
+When a link opens a child tab, the intended final behavior is:
 
-**Phase 2 – zwei begrenzte Bausteine.** Der Gesture-Proof-of-Concept aus
-Phase 1 bleibt unverändert nutzbar. Ein kleiner Hintergrundprozess
-(Manifest-V3-Service-Worker) prüft, ob ein neu geöffneter Tab einen noch
-vorhandenen, eindeutigen Ursprungstab (`openerTabId`) im selben Browserfenster
-besitzt. Zusätzlich unterscheidet Backtrack jetzt zwischen interner
-Zurück-Historie und dem ursprünglichen Einstieg des Kind-Tabs. Das gilt für
-vollständige Seitenwechsel und für Einzelseiten-Apps, die
-`history.pushState()` oder `history.replaceState()` verwenden.
+```text
+Child tab has meaningful internal back history
+→ navigate back inside the child tab first
 
-Die Erweiterung gibt dabei nur eine Diagnoseentscheidung aus. Sie schließt
-oder aktiviert weiterhin keine Tabs und verändert keine Browser-History.
+Child tab is back at its original entry point
+→ close the child tab and focus its opener
+```
 
-Die entscheidenden echten Trackpad-Messungen ergeben ein **Conditional Go**:
-Ein begrenzter Phase-2-Prototyp ist technisch vertretbar. DOM-`preventDefault()`
-stoppt Braves native Zurück-Geste nicht; `overscroll-behavior-x: contain` am
-Wurzelelement tat dies im kontrollierten Versuch. Vertikales Scrollen blieb
-ohne Fehlkandidat, und der lokale horizontale Scrollbereich blieb auch mit
-diesem Schutz bedienbar. Die sichere Herkunftsprüfung ist damit isoliert
-umgesetzt. Die konservative History-Erkennung ist ebenfalls isoliert
-umgesetzt. Tab-Aktionen folgen erst im nächsten getrennten Schritt. Reale
-Tabellen, Carousels und komplexe Webanwendungen bleiben Teil der offenen
-erweiterten Kompatibilitätsmatrix.
+False positives are considered much worse than a missed transition. Any
+unclear state must result in no special action.
 
-## Enthaltene Dateien
+Repository documentation, user-visible development text, tests, and GitHub
+planning are maintained in English.
+
+## Current status
+
+**Phase 2, two bounded components complete.**
+
+The Phase 1 gesture proof of concept remains available. A Manifest V3 service
+worker now validates whether a newly opened tab has a still-existing,
+unambiguous opener (`openerTabId`) in the same browser window. Backtrack also
+distinguishes meaningful internal history from the captured child-tab entry
+point across full-document navigation and single-page applications that use
+`history.pushState()` or `history.replaceState()`.
+
+The extension currently returns diagnostic decisions only. It does not
+navigate browser history, activate tabs, or close tabs.
+
+Real trackpad measurements produced a **Conditional Go** for a bounded Phase 2
+prototype:
+
+- DOM `preventDefault()` did not stop Brave's native back gesture.
+- `overscroll-behavior-x: contain` on the root element did stop it in the
+  controlled test.
+- Slow and fast vertical scrolling produced no horizontal candidate.
+- The local horizontal scroll area remained usable and was correctly blocked
+  as a navigation candidate.
+- Real tables, carousels, Kanban boards, and complex web applications still
+  belong to the open extended compatibility matrix.
+
+See [gesture-research.md](docs/gesture-research.md) for the evidence and the
+exact Phase 1 decision.
+
+## Repository layout
 
 ```text
 manifest.json
 package.json
-src/background/opener-message-handler.js
-src/background/opener-resolver.js
-src/background/back-decision.js
-src/background/navigation-message-handler.js
-src/background/navigation-tracker.js
-src/background/service-worker.js
-src/content/gesture-debug.js
-src/content/navigation-state.js
-src/shared/messages.js
-src/shared/navigation-snapshot.js
-docs/gesture-fixture.html
-docs/navigation-fixture.html
-docs/opener-safety.md
-docs/internal-history.md
-docs/gesture-research.md
-tests/back-decision.test.js
-tests/navigation-message-handler.test.js
-tests/navigation-snapshot.test.js
-tests/navigation-tracker.test.js
-tests/opener-message-handler.test.js
-tests/opener-resolver.test.js
-README.md
+src/
+├── background/
+│   ├── back-decision.js
+│   ├── navigation-message-handler.js
+│   ├── navigation-tracker.js
+│   ├── opener-message-handler.js
+│   ├── opener-resolver.js
+│   └── service-worker.js
+├── content/
+│   ├── gesture-debug.js
+│   └── navigation-state.js
+└── shared/
+    ├── messages.js
+    └── navigation-snapshot.js
+docs/
+├── gesture-fixture.html
+├── gesture-research.md
+├── internal-history.md
+├── navigation-fixture.html
+└── opener-safety.md
+tests/
+├── back-decision.test.js
+├── navigation-message-handler.test.js
+├── navigation-snapshot.test.js
+├── navigation-tracker.test.js
+├── opener-message-handler.test.js
+└── opener-resolver.test.js
 ```
 
-Es gibt bewusst keinen Build-Schritt und keine externen Abhängigkeiten. Brave
-kann den Ordner direkt als entpackte Erweiterung laden. `package.json` enthält
-nur den lokalen Testbefehl.
+There is deliberately no build step and no external dependency. Brave can
+load this directory directly as an unpacked extension. `package.json` contains
+only the local test command.
 
-## Installation in Brave
+## Install in Brave
 
-1. `brave://extensions` öffnen.
-2. Rechts oben den **Entwicklermodus** einschalten.
-3. **Entpackte Erweiterung laden** wählen.
-4. Diesen Projektordner auswählen.
-5. Bereits geöffnete Testseiten neu laden.
+1. Open `brave://extensions`.
+2. Enable **Developer mode** in the upper-right corner.
+3. Select **Load unpacked**.
+4. Select the repository directory.
+5. Reload any test pages that were already open.
 
-Der Projektordner ist:
+Local repository path used during development:
 
 ```text
 /Users/bodhi/Documents/Codex/Backtrack
 ```
 
-## Debug-Protokoll öffnen
+The extension is also expected to load in Google Chrome and other Chromium
+browsers, but Brave on macOS is the primary target.
 
-1. Eine normale `https://`-Webseite öffnen.
-2. Die Entwicklerwerkzeuge öffnen (`⌥⌘I`).
-3. In der Konsole **Preserve log** beziehungsweise **Protokoll beibehalten**
-   aktivieren. Das hilft beim Vergleichen von Rohdaten über ein Neuladen hinweg.
-4. Die Protokollstufe **Verbose** einblenden. Einzelereignisse werden mit
-   `console.debug` ausgegeben; Beginn, Ende und Schwellenüberschreitung einer
-   Geste erscheinen zusätzlich als hervorgehobene Einträge.
-5. Nach `[Backtrack:Gesture]` filtern.
+## Architecture
 
-Wichtig für echte Navigationsversuche: In der getesteten Brave-Version hat die
-rechts angedockte DevTools-Konsole die native Zwei-Finger-Zurück-Navigation
-selbst verhindert. DevTools eignen sich deshalb zum Erfassen der Ereignisse,
-aber nicht als alleiniger Nachweis dafür, dass Backtrack die Browsernavigation
-unterdrückt. Für diesen Test DevTools schließen und den tatsächlichen
-Seitenwechsel beobachten.
+### Gesture instrumentation
 
-### Herkunftsprüfung im Hintergrund
+`src/content/gesture-debug.js` observes horizontal `wheel` sequences at
+`document_start`. It records normalized deltas, axis dominance, cancelability,
+scroll context, preliminary thresholds, and sequence boundaries. It never
+performs navigation.
 
-Die Diagnose der Tab-Herkunft erscheint nicht in der Webseitenkonsole, sondern
-in der Konsole des Erweiterungs-Hintergrundprozesses:
+### Safe opener validation
 
-1. `brave://extensions` öffnen.
-2. Bei **Backtrack Development** auf den Link zum Service Worker klicken.
-3. Aus einem vorhandenen Tab einen Link in einem neuen Tab öffnen.
-4. Nach `[Backtrack:Opener]` filtern.
+The background process validates `openerTabId` without requesting the broad
+`tabs` permission. It rejects missing, closed, moved, discarded, pinned-child,
+or cross-context relationships. The same relationship must be validated again
+immediately before any future tab action.
 
-Ein Ergebnis mit `ok: true` bestätigt nur die eindeutige Herkunftsbeziehung.
-Es löst keine Navigation aus. URLs, Seitentitel und Seiteninhalte werden dabei
-weder protokolliert noch gespeichert.
+See [opener-safety.md](docs/opener-safety.md).
 
-### Interne History prüfen
+### Internal-history detection
 
-Auf normalen Seiten protokolliert `[Backtrack:Navigation]` die lokale
-History-Messung. Im isolierten Backtrack-Kontext der DevTools kann die aktuelle
-Entscheidung außerdem direkt abgefragt werden:
+The content script reads opaque `NavigationHistoryEntry.key` values from the
+Navigation API. The background process remembers the captured child entry key
+and compares it with the current entry key:
+
+```text
+current key differs from child entry key
+→ USE_INTERNAL_HISTORY
+
+current key equals child entry key and opener is still safe
+→ RETURN_TO_OPENER_ELIGIBLE
+
+missing or contradictory evidence
+→ NO_SPECIAL_ACTION
+```
+
+`history.length` is logged for diagnostics only and is never used as the sole
+decision signal. See [internal-history.md](docs/internal-history.md).
+
+## Debugging
+
+### Open the page log
+
+1. Open an ordinary `https://` page.
+2. Open DevTools (`⌥⌘I`).
+3. Enable **Preserve log**.
+4. Enable the **Verbose** log level. Individual events use `console.debug`;
+   sequence start, end, and threshold crossings are also highlighted.
+5. Filter for `[Backtrack:Gesture]` or `[Backtrack:Navigation]`.
+
+For real navigation tests, close DevTools before performing the physical
+gesture. In the tested Brave version, DevTools docked on the right prevented
+native two-finger back navigation by itself. DevTools is useful for capturing
+events but cannot alone prove that Backtrack suppressed browser navigation.
+
+### Inspect opener validation in the background
+
+1. Open `brave://extensions`.
+2. Select the service-worker link for **Backtrack Development**.
+3. Open a link from an existing tab in a new tab.
+4. Filter for `[Backtrack:Opener]`.
+
+An `ok: true` result confirms only the current opener relationship. It performs
+no action. The diagnostic object contains no URL, title, favicon, or page
+content.
+
+### Inspect the internal-history decision
+
+On an ordinary page, choose **Backtrack Development** from the JavaScript
+context menu in DevTools, then run:
 
 ```js
 BacktrackNavigationState.requestBackDecision()
 ```
 
-Die Antwort bedeutet:
+Possible results:
 
-- `USE_INTERNAL_HISTORY`: Der Tab besitzt noch eine interne Zurückstufe.
-- `RETURN_TO_OPENER_ELIGIBLE`: Der Tab ist wieder an seinem erfassten Einstieg
-  und der Ursprung ist weiterhin sicher.
-- `NO_SPECIAL_ACTION`: Die Daten sind unvollständig, widersprüchlich oder der
-  Ursprung ist nicht mehr sicher.
+- `USE_INTERNAL_HISTORY`: the child still has an internal back step;
+- `RETURN_TO_OPENER_ELIGIBLE`: the child is back at its captured entry point
+  and its opener is still safe;
+- `NO_SPECIAL_ACTION`: evidence is missing or contradictory, or the opener is
+  no longer safe.
 
-Alle drei Antworten sind in Version `0.3.0` reine Diagnose. Eine lokale
-Testseite für klassische und SPA-artige Wechsel ist unter
-[`docs/navigation-fixture.html`](docs/navigation-fixture.html) enthalten. Die
-technische Herleitung und alle Sicherheitsgrenzen stehen in
-[`docs/internal-history.md`](docs/internal-history.md).
+All three are diagnostic-only in version `0.3.0`.
 
-Der manuelle Praxistest mit Brave `152.1.94.117` bestätigte am 30. August 2026
-die vollständige Folge: Einstieg → zwei SPA-Schritte → zweimal zurück zum
-Einstieg sowie einen vollständigen Dokumentwechsel. Die jeweilige Diagnose
-wechselte erst am wirklichen Einstieg von `USE_INTERNAL_HISTORY` zu
-`RETURN_TO_OPENER_ELIGIBLE`.
+The manual Brave `152.1.94.117` smoke test on August 30, 2026 covered:
 
-Jedes Protokollobjekt besitzt ein Feld `kind`:
+```text
+child entry
+→ two SPA push steps
+→ one back step, still internal
+→ second back step, entry reached
+→ full-document navigation
+→ tab without opener
+```
 
-- `wheel`: einzelnes rohes und normalisiertes `wheel`-Ereignis;
-- `session-start`: Beginn einer zusammengehörigen Ereignisfolge;
-- `threshold-crossed`: nur ein vorläufiges Messsignal, niemals eine Aktion;
-- `session-end`: Zusammenfassung und vorsichtige Einordnung;
-- `post-dispatch-default-prevented`: die Webseite hat das Ereignis vermutlich
-  nach dem Backtrack-Aufzeichner abgebrochen.
+The decision changed from `USE_INTERNAL_HISTORY` to
+`RETURN_TO_OPENER_ELIGIBLE` only when the real child entry was reached.
 
-Abgeschlossene Messungen erscheinen zusätzlich als einzelne Zeile mit dem
-Präfix `[Backtrack:Gesture:SessionJSON]`. Diese kompakte JSON-Zeile ist in
-jedem JavaScript-Kontext der DevTools sichtbar. Für eine schnelle Auswertung
-ist deshalb kein Wechsel zu **Backtrack Gesture Research** erforderlich.
+## Gesture log format
 
-Schwellenüberschreitungen erscheinen außerdem als
-`[Backtrack:Gesture:ThresholdJSON]`. Diese zweite kompakte Zeile bewahrt den
-letzten Scrollkontext bei eingeschaltetem **Protokoll beibehalten** auch dann,
-wenn Brave die Seite vor dem normalen Ende der Messfolge verlässt.
+Each structured object has a `kind` field:
 
-`POSITIVE_X` und `NEGATIVE_X` sind absichtlich noch **nicht** als „zurück“ oder
-„vorwärts“ bezeichnet. Welche Richtung welche Bedeutung hat, hängt von Gerät,
-macOS-Einstellung und Browser ab und muss im Versuch bestimmt werden.
+- `wheel`: one raw and normalized `wheel` event;
+- `session-start`: start of one related event sequence;
+- `threshold-crossed`: a preliminary measurement signal, never an action;
+- `session-end`: summary and conservative classification;
+- `post-dispatch-default-prevented`: the page probably canceled the event
+  after Backtrack's capture listener.
 
-## Bedienung des Messwerkzeugs
+Completed measurements are also emitted as one compact
+`[Backtrack:Gesture:SessionJSON]` line. Threshold crossings are preserved as
+`[Backtrack:Gesture:ThresholdJSON]`, keeping the last scroll context visible
+with Preserve log even if Brave destroys the old page during navigation.
 
-Das Content Script läuft in einer von der Webseite getrennten JavaScript-Umgebung
-(„isolierte Umgebung“, technisch: *isolated world*). Um die folgenden Befehle
-zu verwenden, in der Konsole über die Kontextauswahl neben `top` den Eintrag
-**Backtrack Gesture Research** wählen.
+`POSITIVE_X` and `NEGATIVE_X` deliberately do not mean back or forward. The
+mapping depends on hardware, macOS settings, and browser behavior and must be
+measured.
 
-Status anzeigen:
+## Gesture research controls
+
+The content script runs in an isolated JavaScript world. Choose
+**Backtrack Gesture Research** or **Backtrack Development** from the DevTools
+context menu before using these commands.
+
+Show status:
 
 ```js
 BacktrackGestureDebug.getStatus()
 ```
 
-Messpuffer leeren:
+Clear the measurement buffer:
 
 ```js
 BacktrackGestureDebug.clearLog()
 ```
 
-Aktuelle Ereignisfolge sofort abschließen und auswerten:
+Finish and summarize the current sequence:
 
 ```js
 BacktrackGestureDebug.finishSession()
 ```
 
-Messungen als JSON kopieren:
+Export measurements as JSON:
 
 ```js
 copy(BacktrackGestureDebug.exportJson())
 ```
 
-Die Daten bleiben nur im Arbeitsspeicher des jeweiligen Seitenrahmens. Ein
-Neuladen oder Schließen der Seite löscht sie. Es werden keine Daten versendet
-oder dauerhaft gespeichert.
+Gesture measurements remain only in the memory of the current page frame.
+Reloading or closing the page removes them. They are never transmitted or
+stored persistently.
 
-## Kontrollierter `preventDefault()`-Versuch
+### Controlled `preventDefault()` experiment
 
-Standardmäßig beobachtet der PoC ausschließlich:
+The PoC observes only by default:
 
 ```js
 BacktrackGestureDebug.getConfig().preventDefaultMode
 // "off"
 ```
 
-Für Testfall D kann das Abbrechen horizontal dominanter Einzelereignisse
-vorübergehend aktiviert werden:
+Temporarily cancel horizontally dominant events for test case D:
 
 ```js
 BacktrackGestureDebug.configure({ preventDefaultMode: "horizontal" })
 ```
 
-Danach unbedingt wieder ausschalten:
+Disable the experiment afterwards:
 
 ```js
 BacktrackGestureDebug.configure({ preventDefaultMode: "off" })
 ```
 
-Der Modus `horizontal` kann horizontales Scrollen auf der Testseite stören. Er
-ist nur für einen kontrollierten Vergleich gedacht. Der noch stärkere Modus
-`all` unterdrückt versuchsweise jedes abbrechbare `wheel`-Ereignis und sollte
-nicht beim normalen Browsen aktiv bleiben.
+The `horizontal` mode may interfere with horizontal scrolling. The stronger
+`all` mode cancels every cancelable wheel event and must not remain active
+during ordinary browsing.
 
-Zusätzlich lässt sich für einen getrennten Vergleich die horizontale
-Überlauf-Navigation am Wurzelelement per CSS begrenzen:
+Test root overscroll containment separately:
 
 ```js
 BacktrackGestureDebug.setRootOverscrollBehavior("contain")
 BacktrackGestureDebug.setRootOverscrollBehavior("unchanged")
 ```
 
-Auch das ist nur ein Messschalter. `unchanged` stellt den zuvor vorhandenen
-Inline-Wert wieder her.
+This is also a research switch only. `unchanged` restores the previous inline
+value.
 
-## Manuelle Testfolge
+## Manual gesture test sequence
 
-Für jeden Test zuerst den Messpuffer leeren, genau eine Geste ausführen, kurz
-warten und anschließend den JSON-Export sichern. Browser-Version,
-macOS-Version, Trackpad-Modell und die Einstellung **Natürliche
-Scrollrichtung** mitnotieren.
+Before every case, clear the buffer, perform exactly one gesture, wait briefly,
+and save the JSON export. Record the browser version, macOS version, trackpad
+model, and the **Natural scrolling** setting.
 
-Für die kontrollierten Fälle B und C kann die lokale Testseite verwendet
-werden. Im Projektordner starten:
+Start the local fixture server from the repository root:
 
 ```sh
 python3 -m http.server 8765 --bind 127.0.0.1
 ```
 
-Danach in Brave öffnen:
+Open:
 
 ```text
 http://127.0.0.1:8765/docs/gesture-fixture.html
 ```
 
-Die Seite lädt keine externen Ressourcen. Ihr blauer Bereich beginnt in einer
-mittleren horizontalen Position, sodass beide Richtungen getestet werden
-können.
+The page loads no external resources. Its blue horizontal area starts in a
+middle position so both directions can be tested.
 
-### A. Seite ohne horizontales Scrollen
+### A. Page without horizontal scrolling
 
-- Eine einfache normale Webseite verwenden.
-- Einmal mit zwei Fingern nach rechts, dann in einer neuen Messung nach links
-  wischen.
-- Vorzeichen, Ereignisanzahl, Gesamtdistanz und die native Browserreaktion
-  notieren.
+- Use a simple ordinary page.
+- Swipe right once, then left in a separate measurement.
+- Record sign, event count, total distance, and native browser behavior.
 
-### B. Vertikal scrollbare Seite
+### B. Vertically scrollable page
 
-- Mehrmals normal nach oben und unten scrollen.
-- Erwartung des PoC: `session-end.evaluation.classification` bleibt
-  `NO_CANDIDATE`, meistens wegen unzureichender horizontaler Dominanz.
+- Scroll up and down normally several times.
+- Expected: `session-end.evaluation.classification` remains `NO_CANDIDATE`,
+  usually because horizontal dominance is too low.
 
-### C. Horizontaler Scrollbereich
+### C. Horizontal scroll area
 
-- Über einer großen Tabelle, einem Karussell oder einem horizontalen
-  Codebereich wischen.
-- Prüfen, ob `horizontalScrollContext` erkannt wird.
-- Die Sicherheitsregel des PoC blockiert einen Kandidaten vorsorglich bereits,
-  sobald die Geste innerhalb eines erkennbaren horizontalen Scrollbereichs
-  stattfindet – unabhängig davon, ob der Bereich gerade an seinem Rand steht.
+- Swipe over a large table, carousel, or horizontal code area.
+- Check whether `horizontalScrollContext` is detected.
+- The PoC blocks a candidate whenever a detectable horizontal scroll area is
+  involved, even if that area is currently at an edge.
 
-### D. Native Brave-Zurück-Geste
+### D. Native Brave back gesture
 
-- Zuerst innerhalb desselben Tabs auf eine zweite Seite navigieren.
-- Mit ausgeschaltetem `preventDefaultMode` die native Zurück-Geste ausführen.
-- Prüfen, welche `wheel`-Ereignisse vor der Navigation sichtbar sind und ob die
-  Folge vollständig wirkt.
-- Den Versuch kontrolliert mit `preventDefaultMode: "horizontal"` wiederholen.
-- Optional als getrennten dritten Versuch
-  `setRootOverscrollBehavior("contain")` verwenden.
-- Nach jedem Versuch die Schalter zurücksetzen.
+- Navigate to a second page in the same tab.
+- Perform native back with `preventDefaultMode` off.
+- Compare the visible `wheel` stream with actual browser navigation.
+- Repeat with `preventDefaultMode: "horizontal"`.
+- Optionally run a separate comparison with root containment enabled.
+- Reset every research switch after the test.
 
-### E. Momentum beziehungsweise Nachlauf
+### E. Momentum or trailing decay
 
-- Eine kurze, schnelle Bewegung ausführen und die Finger abheben.
-- Prüfen, wie viele abklingende Ereignisse folgen.
-- Der PoC besitzt nur eine ausdrücklich als unsicher markierte
-  `DECAY_TAIL_ONLY`-Heuristik. Der Standard-`WheelEvent` liefert keine
-  verlässliche Momentum-Phase.
+- Perform a short fast movement and lift both fingers.
+- Inspect how many decaying events follow.
+- `DECAY_TAIL_ONLY` is explicitly a heuristic. Standard `WheelEvent` exposes
+  no reliable momentum phase.
 
-Die vollständige Ergebnistabelle steht in
-[`docs/gesture-research.md`](docs/gesture-research.md).
+The complete evidence matrix is in
+[gesture-research.md](docs/gesture-research.md).
 
-## Erste, bewusst konservative Heuristik
+## Conservative preliminary heuristic
 
-Eine Ereignisfolge wird nur als horizontaler **Messkandidat** eingeordnet, wenn:
+A sequence is classified as a horizontal **measurement candidate** only when:
 
-- die Netto-Horizontaldistanz mindestens 80 normalisierte Pixel beträgt;
-- die aufsummierte horizontale Bewegung mindestens 2,5-mal so groß wie die
-  vertikale Bewegung ist;
-- mindestens 80 Prozent der Horizontalbewegung in dieselbe Richtung gehen;
-- kein erkennbarer horizontaler Scrollbereich beteiligt war;
-- keine Zusatztaste gedrückt war;
-- die Webseite das Standardverhalten nicht erkennbar selbst abgebrochen hat.
+- net horizontal distance is at least 80 normalized pixels;
+- accumulated horizontal movement is at least 2.5 times vertical movement;
+- at least 80% of horizontal movement keeps the same direction;
+- no detectable horizontal scroll area is involved;
+- no modifier key is pressed;
+- the page did not observably cancel the default behavior itself.
 
-Diese Werte sind Startwerte für die Forschung, keine fertige
-Produkterkennung. Der PoC meldet bei einer Schwellenüberschreitung nur
-`threshold-crossed` und führt keinerlei Navigation aus.
+These are research starting values, not production gesture detection.
+`threshold-crossed` never performs navigation.
 
-## Berechtigungen und Datenschutz
+## Permissions and privacy
 
-| Zugriff | Warum benötigt? | Vermeidbar? | Theoretischer Datenzugriff |
+| Access | Why needed? | Can it be avoided? | Theoretical data access |
 | --- | --- | --- | --- |
-| `storage` | `chrome.storage.session` hält die nicht sprechende Einstiegskennung im Arbeitsspeicher, auch wenn Chromium den kurzlebigen Hintergrundprozess schlafen legt und neu startet. | Nicht sicher vermeidbar. Ein verlorener Einstieg dürfte nicht durch eine erfundene neue Grundlinie ersetzt werden. | Die Berechtigung könnte theoretisch auch dauerhaften Erweiterungsspeicher öffnen. Backtrack verwendet ausschließlich den flüchtigen Sitzungsspeicher und legt dort keine URLs, Titel oder Inhalte ab. |
-| Keine `tabs`-Berechtigung | Der Hintergrundprozess verwendet `chrome.tabs.onCreated` und `chrome.tabs.get()` nur für nicht sensible Tab-Eigenschaften wie IDs, Fenster, angeheftet/gruppiert und `openerTabId`. | Bereits vermieden. | Ohne `tabs`-Berechtigung erhält die Erweiterung über diese API insbesondere keine freigeschalteten Felder für URL, Seitentitel oder Favicon. |
-| Keine `webNavigation`-Berechtigung | Vollständige Seitenwechsel und SPA-Routen werden über die Navigation API im Content Script erkannt. | Bereits vermieden. | Backtrack erhält dadurch keine zusätzliche Erweiterungs-Schnittstelle für Navigationsereignisse und Adressen. |
-| Automatisches Content Script auf `http://*/*` und `https://*/*` | Gesten und Wechsel der Browser-History müssen auf unterschiedlichen normalen Webseiten möglichst früh beobachtet werden. | Für eine manuell pro Seite aktivierte Forschungsversion wäre `activeTab` möglich, würde aber Toolbar-Aktion, Service Worker und einen zusätzlichen Bedienungsschritt verlangen. Für eine Produktionsversion muss die Entscheidung neu bewertet werden. | Ein Content Script könnte grundsätzlich Seiten-DOM lesen oder verändern. Backtrack verarbeitet nur Ereignis-, Größen- und Scrollkontextdaten sowie nicht sprechende Navigationseintrags-Kennungen. Es protokolliert keine URL und sendet nichts an einen Server. |
+| `storage` | `chrome.storage.session` keeps the opaque child entry key in memory when Chromium suspends and restarts the short-lived service worker. | Not safely. A lost entry must not be replaced with an invented baseline. | The permission could also allow persistent extension storage. Backtrack uses only volatile session storage and stores no URLs, titles, or content. |
+| No `tabs` permission | The background uses `chrome.tabs.onCreated` and `chrome.tabs.get()` only for non-sensitive fields such as IDs, window, pinned/grouped state, and `openerTabId`. | Already avoided. | Without `tabs`, the API does not expose privileged URL, title, or favicon fields to Backtrack. |
+| No `webNavigation` permission | Full-document and SPA changes are observed through the Navigation API in the content script. | Already avoided. | Backtrack gains no additional extension-level navigation event or address access. |
+| Automatic content script on `http://*/*` and `https://*/*` | Gesture and history changes must be observed early across ordinary websites. | An `activeTab` research build is possible but would require a toolbar action, service worker, and an extra step on every page. Reassess before production. | A content script could theoretically read or alter page DOM. Backtrack processes only event, geometry, scroll-context, and opaque navigation-entry data. It logs no URL and contacts no server. |
 
-Die Erweiterung läuft nicht auf `brave://`, `chrome://`, im Chrome Web Store
-oder auf anderen geschützten Browserseiten. `file://` ist ebenfalls nicht im
-Manifest enthalten. Unterseiten in eingebetteten Rahmen werden nur erfasst,
-wenn deren eigene Adresse ebenfalls `http://` oder `https://` verwendet.
-Die Herkunftsprüfung speichert keinen dauerhaften Tab-Baum und keine Adressen
-aus der Browser-History. Ihre genauen Sicherheitsregeln stehen in
-[`docs/opener-safety.md`](docs/opener-safety.md).
+Backtrack does not run on `brave://`, `chrome://`, the Chrome Web Store, or
+other protected browser pages. `file://` is not matched. Subframes are included
+only when their own address matches `http://` or `https://`.
 
-## Bekannte Grenzen des PoC
+## Known limitations
 
-- Webinhalte erhalten nicht zwingend dieselben Informationen wie Braves
-  native macOS-Gestenverarbeitung.
-- Ein Standard-`WheelEvent` benennt das Eingabegerät nicht sicher als Trackpad
-  oder Maus und stellt keine standardisierte Gesture-/Momentum-Phase bereit.
-- Webseiten mit eigener JavaScript-Gestenlogik können wie ein normaler
-  Scrollbereich aussehen oder sich dem DOM-Scrolltest vollständig entziehen.
-- Entwicklertools müssen **Protokoll beibehalten**, wenn Logs eine echte
-  Navigation überstehen sollen.
-- Die Messpuffer mehrerer eingebetteter Seitenrahmen sind voneinander getrennt.
-- Die hier erkannten Richtungen sind noch nicht semantisch als `BACK_GESTURE`
-  oder `FORWARD_GESTURE` kalibriert.
-- Tabs, die bereits vor dem Laden oder Neuladen der Erweiterung offen waren,
-  erhalten aus Sicherheitsgründen keinen nachträglich erfundenen Einstieg.
-- Nach einem Browserneustart oder Erweiterungs-Neuladen ist der flüchtige
-  History-Zustand weg. Der betroffene Tab bleibt dann unangetastet.
-- Geschützte Browserseiten, auf denen kein Content Script laufen darf, liefern
-  keine History-Messung und führen zu keiner besonderen Aktion.
+- Web content does not necessarily receive the same information as Brave's
+  native macOS gesture machinery.
+- Standard `WheelEvent` cannot reliably identify trackpad versus mouse and
+  exposes no standardized gesture or momentum phase.
+- Sites with custom JavaScript gesture logic may look like ordinary scroll
+  areas or evade DOM scroll detection entirely.
+- DevTools Preserve log is required if logs must survive real navigation.
+- Measurement buffers in embedded frames are separate.
+- X directions are not yet calibrated semantically as `BACK_GESTURE` and
+  `FORWARD_GESTURE`.
+- Tabs open before the extension is loaded or reloaded receive no invented
+  entry point.
+- Browser or extension restart clears volatile history state; affected tabs
+  remain untouched.
+- Protected pages provide no content-script history evidence and therefore
+  trigger no special action.
 
-## Quellen für die technische Ausgangslage
+## Sources
 
-- [Chrome-Dokumentation zu Content Scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts)
-- [Chrome-Dokumentation zur Tabs API](https://developer.chrome.com/docs/extensions/reference/api/tabs)
-- [Chrome-Dokumentation zur Navigation API](https://developer.chrome.com/docs/web-platform/navigation-api/)
-- [WHATWG-Spezifikation der Navigation API](https://html.spec.whatwg.org/multipage/nav-history-apis.html)
-- [Chrome-Dokumentation zur Storage API](https://developer.chrome.com/docs/extensions/reference/api/storage/)
-- [Chrome-Dokumentation zu Erweiterungs-Service-Workern](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/basics)
-- [UI-Events-Spezifikation des W3C](https://www.w3.org/TR/uievents/)
-- [Chromiums macOS-`HistorySwiper`](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_history_swiper.h)
-- [Chromiums `OverscrollController`](https://chromium.googlesource.com/chromium/src/+/HEAD/content/browser/renderer_host/overscroll_controller.cc)
-- [Chrome-Dokumentation zu `overscroll-behavior`](https://developer.chrome.com/blog/overscroll-behavior/)
+- [Chrome: content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts)
+- [Chrome: Tabs API](https://developer.chrome.com/docs/extensions/reference/api/tabs)
+- [Chrome: Navigation API](https://developer.chrome.com/docs/web-platform/navigation-api/)
+- [WHATWG: Navigation API](https://html.spec.whatwg.org/multipage/nav-history-apis.html)
+- [Chrome: Storage API](https://developer.chrome.com/docs/extensions/reference/api/storage/)
+- [Chrome: extension service workers](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/basics)
+- [W3C UI Events](https://www.w3.org/TR/uievents/)
+- [Chromium: macOS HistorySwiper](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_history_swiper.h)
+- [Chromium: OverscrollController](https://chromium.googlesource.com/chromium/src/+/HEAD/content/browser/renderer_host/overscroll_controller.cc)
+- [Chrome: overscroll behavior](https://developer.chrome.com/blog/overscroll-behavior/)
 
-## Noch ausdrücklich nicht enthalten
+## Deliberately not included yet
 
-- `chrome.tabs.remove()` oder `chrome.tabs.update()`
-- tatsächliches Zurücknavigieren innerhalb des Tabs
-- Aktivieren oder Schließen des Ursprungstabs
-- dauerhaft gespeicherter Tab-Baum oder dauerhaft gespeicherte Browser-History
-- Optionsseite
-- Telemetrie, Serverzugriffe oder dauerhafte Speicherung
+- calls to `chrome.tabs.remove()` or `chrome.tabs.update()`;
+- actual back navigation inside the child tab;
+- opener activation or child-tab closure;
+- a persistently stored tab tree or browser history;
+- an options page;
+- telemetry, server access, or persistent storage.

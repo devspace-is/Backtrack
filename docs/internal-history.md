@@ -1,178 +1,170 @@
-# Interne Zurück-Historie
+# Internal Back History
 
-Stand: 30. August 2026
+Status: August 30, 2026
 
-## Zweck dieses Schritts
+## Purpose of this step
 
-Dieser zweite Baustein von Phase 2 beantwortet ausschließlich:
+This second Phase 2 component answers one question only:
 
-> Kann der aktuelle Kind-Tab sinnvoll innerhalb seiner eigenen Historie
-> zurückgehen, oder steht er wieder an seinem ursprünglichen Einstieg?
+> Can the current child tab meaningfully navigate back inside its own history,
+> or is it back at its original entry point?
 
-Backtrack gibt dafür eine von drei vorsichtigen Entscheidungen aus:
+Backtrack returns one of three conservative decisions:
 
-| Entscheidung | Bedeutung in dieser Version |
+| Decision | Meaning in this version |
 | --- | --- |
-| `USE_INTERNAL_HISTORY` | Der Tab befindet sich hinter seinem Einstieg. Ein späterer Aktionsschritt soll zuerst innerhalb des Tabs zurückgehen. |
-| `RETURN_TO_OPENER_ELIGIBLE` | Der Tab steht wieder am erfassten Einstieg und der Ursprungstab ist weiterhin sicher. Ein späterer Aktionsschritt darf den Tab-Wechsel erwägen. |
-| `NO_SPECIAL_ACTION` | Die Lage ist unklar oder unsicher. Backtrack soll nichts übernehmen. |
+| `USE_INTERNAL_HISTORY` | The tab is beyond its entry point. A later action step should navigate back inside the tab first. |
+| `RETURN_TO_OPENER_ELIGIBLE` | The tab is back at the captured entry point and its opener is still safe. A later action step may consider returning to the opener. |
+| `NO_SPECIAL_ACTION` | The state is unclear or unsafe. Backtrack must not take control. |
 
-Diese Version führt noch keine dieser Aktionen aus. Sie ruft weder
-`history.back()` auf noch aktiviert oder schließt sie einen Tab.
+This version performs none of those actions. It does not call `history.back()`,
+activate a tab, or close a tab.
 
-## Warum `history.length` nicht genügt
+## Why `history.length` is insufficient
 
-`history.length` zählt Einträge in der gemeinsamen Sitzungshistorie eines
-Browserrahmens. Die Zahl verrät aber nicht, welcher Eintrag der Einstieg des
-Kind-Tabs war. Sie kann außerdem bereits beim Öffnen größer als eins sein und
-ändert sich bei Vorwärts- und Zurückbewegungen nicht so, dass daraus die
-aktuelle Position eindeutig folgt.
+`history.length` counts entries in the joint session history of a browser
+frame. It does not reveal which entry was the child tab's starting point. The
+value may also be greater than one when the child opens, and back/forward
+traversal does not change it in a way that uniquely identifies the current
+position.
 
-Backtrack erfasst den Wert deshalb nur im lokalen Diagnoseprotokoll. Er fließt
-nicht in die Entscheidung ein.
+Backtrack therefore captures the value for local diagnostics only. It is not
+used as a decision signal.
 
-## Das verwendete Modell
+## The tracking model
 
-Chromiums Navigation API gibt jeder Stelle der Sitzungshistorie eine nicht
-sprechende Kennung (`NavigationHistoryEntry.key`). Diese Kennung bleibt bei
-einem erneuten Besuch derselben Historiestelle gleich. Backtrack erfasst beim
-Start eines sicher zugeordneten Kind-Tabs:
+Chromium's Navigation API assigns an opaque key
+(`NavigationHistoryEntry.key`) to every session-history position. The key
+remains stable when the browser revisits that position. When a safely
+validated child tab starts, Backtrack captures:
 
-- die Kennung seiner Einstiegstelle;
-- die Kennung seiner aktuellen Historiestelle;
-- die Art des letzten Wechsels: neuer Eintrag, Ersetzen, Neuladen oder
-  Zurück-/Vorwärtsbewegung;
-- kleine Sicherheitssignale wie „Navigation läuft gerade“.
+- the key of its entry position;
+- the key of its current history position;
+- the most recent navigation type: push, replace, reload, or traversal;
+- small safety signals such as whether a navigation is still in progress.
 
-Es werden ausdrücklich keine URL, kein Seitentitel, kein Favicon und kein
-Seiteninhalt gespeichert.
+No URL, page title, favicon, or page content is stored.
 
 ```text
-Einstieg A → neuer Eintrag B → neuer Eintrag C
-    ↑                                │
-    └──────── zurück B ← zurück C ───┘
+Entry A → new entry B → new entry C
+   ↑                           │
+   └────── back to B ← back ───┘
 
-aktuelle Kennung != Einstiegskennung  → interne Zurück-Historie
-aktuelle Kennung == Einstiegskennung  → wieder am Einstieg
+current key != entry key  → internal back history exists
+current key == entry key  → back at the child entry point
 ```
 
-### Behandlung der Navigationstypen
+### Navigation-type handling
 
-| Browsermeldung | Behandlung |
+| Browser signal | Handling |
 | --- | --- |
-| `push` | Eine neue Historiestelle. Weicht ihre Kennung vom Einstieg ab, bleibt interne Zurück-Historie erhalten. Das umfasst klassische Seitenwechsel und `history.pushState()` in Einzelseiten-Apps (SPAs). |
-| `traverse` | Zurück- oder Vorwärtsbewegung zu einer vorhandenen Kennung. Erst bei der Einstiegskennung ist der Tab wieder am Einstieg. |
-| `replace` am Einstieg | Ersetzt den Einstieg, ohne eine zusätzliche Zurückstufe zu erzeugen. Die neue Kennung wird zum neuen Einstieg. |
-| `replace` hinter dem Einstieg | Ersetzt nur die aktuelle interne Stufe. Der ursprüngliche Einstieg bleibt erhalten. |
-| `reload` mit gleicher Kennung | Die Position bleibt bekannt. |
-| unerwarteter Kennungswechsel | Unsicherer Zustand; keine besondere Aktion. |
+| `push` | A new history position. If its key differs from the entry key, internal back history exists. This includes full-document navigation and `history.pushState()` in single-page applications (SPAs). |
+| `traverse` | Back or forward traversal to an existing key. The tab is back at its entry point only when the entry key is reached. |
+| `replace` at the entry point | Replaces the entry without adding another back step. The replacement key becomes the new entry key. |
+| `replace` beyond the entry point | Replaces only the current internal step. The original entry remains unchanged. |
+| `reload` with the same key | The position remains known. |
+| unexpected key change | Unsafe state; no special action. |
 
-## Warum `navigation.canGoBack` nur ein Kontrollsignal ist
+## Why `navigation.canGoBack` is only a cross-check
 
-Die Navigation API darf aus Datenschutzgründen nur gleichartige Einträge aus
-demselben Ursprung vollständig offenlegen. Deshalb kann `canGoBack` den Wert
-`false` liefern, obwohl vor der aktuellen Seite noch eine sinnvolle
-andersartige oder fremde Seite in der Tab-Historie liegt.
+For privacy reasons, the Navigation API can expose only a limited set of
+same-origin history entries. `canGoBack` can therefore be `false` even when a
+meaningful cross-origin page precedes the current page in the tab history.
 
-Backtrack verwendet daher die über Seitenwechsel hinweg erfasste, nicht
-sprechende Kennung als Hauptsignal. Meldet der Browser am erfassten Einstieg
-gleichzeitig `canGoBack: true`, widersprechen sich die Signale. Backtrack
-entscheidet dann sicherheitshalber `NO_SPECIAL_ACTION`.
+Backtrack uses the opaque key captured across document changes as its primary
+signal. If the browser simultaneously reports `canGoBack: true` at the tracked
+entry point, the signals contradict each other. Backtrack then returns
+`NO_SPECIAL_ACTION`.
 
-## Normale Seiten und Einzelseiten-Apps
+## Full pages and single-page applications
 
-Das Content Script läuft früh auf normalen `http://`- und `https://`-Seiten.
-Es veröffentlicht einen Zustand beim Dokumentstart, beim Anzeigen einer Seite
-und bei den Ereignissen `currententrychange` und `navigatesuccess` der
-Navigation API. Damit werden abgedeckt:
+The content script runs early on ordinary `http://` and `https://` pages. It
+publishes a snapshot at document start, when a page is shown, and for the
+Navigation API events `currententrychange` and `navigatesuccess`. This covers:
 
-- vollständige Dokumentwechsel;
-- `history.pushState()` und `history.replaceState()`;
-- Zurück-/Vorwärtsbewegungen mit `popstate`-ähnlicher Wirkung;
-- Routenwechsel moderner Einzelseiten-Apps, sofern sie die Browserhistorie
-  korrekt benutzen.
+- full-document navigation;
+- `history.pushState()` and `history.replaceState()`;
+- back/forward traversal with `popstate`-like behavior;
+- route changes in modern SPAs that use browser history correctly.
 
-Reine interne Ansichtswechsel ohne Browser-Historieneintrag sind keine
-sinnvolle Browser-Zurückstufe und werden absichtlich nicht als solche gezählt.
+Pure view changes without a browser-history entry are not meaningful browser
+back steps and are deliberately not counted.
 
-## Kurzlebiger Zustand und Berechtigung
+## Volatile state and permission
 
-Manifest-V3-Hintergrundprozesse können vom Browser jederzeit beendet und
-später neu gestartet werden. Ein gewöhnliches JavaScript-Objekt könnte dann
-den erfassten Einstieg verlieren. Deshalb verwendet Backtrack
-`chrome.storage.session` aus der Berechtigung `storage`.
+Manifest V3 background processes can be stopped and restarted by the browser
+at any time. A normal JavaScript object could then lose the captured child
+entry. Backtrack therefore uses `chrome.storage.session` through the `storage`
+permission.
 
-Dieser Sitzungsspeicher:
+This session storage:
 
-- liegt nur im Arbeitsspeicher;
-- übersteht das Schlafen und Neustarten des Hintergrundprozesses;
-- wird beim Deaktivieren, Neuladen oder Aktualisieren der Erweiterung sowie
-  beim Browserneustart geleert;
-- ist standardmäßig nicht direkt für Webseiten-Content-Scripts freigegeben;
-- enthält bei Backtrack nur Tab-IDs, Ursprungstab-ID, nicht sprechende
-  Eintragskennungen und wenige Statuswerte.
+- lives only in memory;
+- survives the background process going to sleep and restarting;
+- is cleared when the extension is disabled, reloaded, or updated, and when
+  the browser restarts;
+- is not exposed directly to webpage content scripts by default;
+- stores only tab IDs, the opener tab ID, opaque entry keys, and a few status
+  values for Backtrack.
 
-Die Berechtigung könnte theoretisch auch dauerhaften Erweiterungsspeicher
-zugänglich machen. Backtrack ruft jedoch ausschließlich `storage.session` auf.
-Ohne diese Berechtigung wäre der Einstieg nach einem normalen Schlafen des
-Hintergrundprozesses nicht zuverlässig bekannt. Eine dann erfundene neue
-Grundlinie wäre gefährlicher als der kleine, flüchtige Zustand.
+The permission could theoretically also allow persistent extension storage,
+but Backtrack calls only `storage.session`. Without it, the entry point would
+become unknown after a routine background-process restart. Inventing a new
+baseline would be more dangerous than keeping this small volatile state.
 
-Die weitergehende Berechtigung `webNavigation` wird nicht verwendet. Sie wäre
-für dieses Modell unnötig und könnte einer Erweiterung zusätzliche
-Navigationsereignisse samt Adressen zugänglich machen.
+The broader `webNavigation` permission is not used. It is unnecessary for this
+model and could expose additional navigation events and addresses to an
+extension.
 
-## Sicheres Verhalten bei Lücken
+## Safe behavior when evidence is missing
 
-`NO_SPECIAL_ACTION` gilt unter anderem, wenn:
+Backtrack returns `NO_SPECIAL_ACTION`, among other cases, when:
 
-- der Tab nicht seit seiner Erstellung als sicherer Kind-Tab verfolgt wird;
-- die Erweiterung oder der Browser seit dem Öffnen neu gestartet wurde;
-- die Navigation API fehlt oder unvollständige Daten liefert;
-- ein Seitenwechsel gerade noch läuft;
-- Kennungen oder Browsermeldungen einander widersprechen;
-- der Ursprungstab inzwischen fehlt oder nicht mehr sicher erreichbar ist;
-- die Seite geschützt ist und dort kein Content Script laufen darf.
+- the tab was not tracked as a safe child from the moment it was created;
+- the extension or browser restarted after the tab opened;
+- the Navigation API is missing or returns incomplete data;
+- a navigation is still in progress;
+- entry keys and browser signals contradict each other;
+- the opener is missing or no longer safely reachable;
+- the page is protected and cannot run the content script.
 
-Ein bereits geöffneter Tab wird nach einem Erweiterungs-Neuladen nicht
-rückwirkend übernommen. Backtrack könnte seinen wirklichen Einstieg nicht mehr
-beweisen und erfindet deshalb keinen.
+A tab that was already open when the extension was reloaded is not adopted
+retroactively. Backtrack cannot prove its real entry point and therefore does
+not invent one.
 
-## Lokaler Test
+## Local test
 
-Die Datei [`navigation-fixture.html`](navigation-fixture.html) enthält eine
-kleine Einzelseiten-App ohne externe Ressourcen. Nach dem Start eines lokalen
-Webservers können dort neue und ersetzte Historienstellen sowie mehrstufiges
-Zurückgehen geprüft werden.
+[`navigation-fixture.html`](navigation-fixture.html) contains a small SPA with
+no external resources. After starting a local web server, it can create and
+replace history positions and traverse back through multiple steps.
 
-Im isolierten Backtrack-Kontext der DevTools zeigt folgender Aufruf die
-aktuelle Diagnoseentscheidung:
+In the isolated Backtrack DevTools context, this command displays the current
+diagnostic decision:
 
 ```js
 BacktrackNavigationState.requestBackDecision()
 ```
 
-## Manueller Brave-Praxistest
+## Manual Brave smoke test
 
-Am 30. August 2026 wurde Version `0.3.0` in Brave `152.1.94.117` unter macOS
-neu geladen und mit einem echten, über den Link der Testseite geöffneten
-Kind-Tab geprüft. Das beobachtete Ergebnis:
+On August 30, 2026, version `0.3.0` was reloaded in Brave `152.1.94.117` on
+macOS and tested with a real child tab opened through the fixture link.
 
-| Zustand des Kind-Tabs | Diagnose |
+| Child-tab state | Diagnostic decision |
 | --- | --- |
-| Direkt am Einstieg | `RETURN_TO_OPENER_ELIGIBLE` |
-| Nach zwei `history.pushState()`-Schritten | `USE_INTERNAL_HISTORY` |
-| Nach einem Schritt zurück, noch oberhalb des Einstiegs | `USE_INTERNAL_HISTORY` |
-| Nach dem zweiten Schritt zurück, wieder am Einstieg | `RETURN_TO_OPENER_ELIGIBLE` |
-| Nach einem vollständigen Dokumentwechsel | `USE_INTERNAL_HISTORY` |
-| Manuell geöffneter Tab ohne `openerTabId` | `NO_SPECIAL_ACTION` mit `NO_OPENER` |
+| Directly at the entry point | `RETURN_TO_OPENER_ELIGIBLE` |
+| After two `history.pushState()` steps | `USE_INTERNAL_HISTORY` |
+| After one back step, still beyond the entry point | `USE_INTERNAL_HISTORY` |
+| After the second back step, back at the entry point | `RETURN_TO_OPENER_ELIGIBLE` |
+| After a full-document navigation | `USE_INTERNAL_HISTORY` |
+| Manually opened tab without `openerTabId` | `NO_SPECIAL_ACTION` with `NO_OPENER` |
 
-Die Testseite zeigte beim Kind-Tab außerdem `history.length: 1` am Einstieg.
-Die Entscheidung stammte trotzdem aus der erfassten Einstiegskennung, nicht
-aus dieser Zahl. Beim Test wurden weder Browser-History noch Tabs verändert;
-alle Ergebnisse waren reine Diagnose.
+The child fixture also reported `history.length: 1` at its entry point. The
+decision still came from the captured entry key, not from that number. The
+test changed neither browser history nor tabs; every result was diagnostic
+only.
 
-## Quellen
+## Sources
 
 - [Chrome: Navigation API](https://developer.chrome.com/docs/web-platform/navigation-api/)
 - [WHATWG HTML: Navigation API](https://html.spec.whatwg.org/multipage/nav-history-apis.html)

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,18 +35,18 @@
     </style>
   </head>
   <body>
-    <h1>Backtrack: interne History</h1>
+    <h1>Backtrack: internal history</h1>
     <p>
-      Diese lokale Seite erzeugt nachvollziehbare History-Schritte ohne
-      Framework und ohne externe Verbindung.
+      This local page creates observable history steps without a framework or
+      an external connection.
     </p>
     <p>
-      <button id="push" type="button">SPA-Schritt hinzufügen</button>
-      <button id="replace" type="button">Aktuellen Schritt ersetzen</button>
-      <button id="back" type="button">Einmal zurück</button>
-      <a id="document" href="?document-step=1">Vollständiger Seitenwechsel</a>
+      <button id="push" type="button">Add SPA step</button>
+      <button id="replace" type="button">Replace current step</button>
+      <button id="back" type="button">Go back once</button>
+      <a id="document" href="?document-step=1">Full-document navigation</a>
       <a id="child" href="?child=1" target="_blank" rel="opener">
-        Kind-Tab mit Ursprung öffnen
+        Open child tab with opener
       </a>
     </p>
     <output id="status" aria-live="polite"></output>
@@ -56,7 +56,7 @@
         const status = document.querySelector("#status");
 
         function shortKey(key) {
-          return typeof key === "string" ? `${key.slice(0, 8)}…` : "nicht verfügbar";
+          return typeof key === "string" ? `${key.slice(0, 8)}…` : "unavailable";
         }
 
         function render(eventName) {
@@ -68,7 +68,7 @@
               entryKeyPreview: shortKey(entry?.key),
               canGoBack: globalThis.navigation?.canGoBack ?? null,
               historyLength: history.length,
-              note: "historyLength ist nur Anzeige, kein Backtrack-Entscheidungssignal.",
+              note: "historyLength is display-only, not a Backtrack decision signal.",
             },
             null,
             2,
