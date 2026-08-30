@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Backtrack Navigation Fixture</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+
+      body {
+        max-width: 48rem;
+        margin: 3rem auto;
+        padding: 0 1.25rem;
+        line-height: 1.5;
+      }
+
+      button,
+      a {
+        display: inline-block;
+        margin: 0.25rem 0.25rem 0.25rem 0;
+        padding: 0.55rem 0.8rem;
+      }
+
+      output {
+        display: block;
+        margin-top: 1.5rem;
+        padding: 1rem;
+        border: 1px solid currentColor;
+        border-radius: 0.5rem;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Backtrack: interne History</h1>
+    <p>
+      Diese lokale Seite erzeugt nachvollziehbare History-Schritte ohne
+      Framework und ohne externe Verbindung.
+    </p>
+    <p>
+      <button id="push" type="button">SPA-Schritt hinzufügen</button>
+      <button id="replace" type="button">Aktuellen Schritt ersetzen</button>
+      <button id="back" type="button">Einmal zurück</button>
+      <a id="document" href="?document-step=1">Vollständiger Seitenwechsel</a>
+      <a id="child" href="?child=1" target="_blank" rel="opener">
+        Kind-Tab mit Ursprung öffnen
+      </a>
+    </p>
+    <output id="status" aria-live="polite"></output>
+    <script>
+      (() => {
+        let counter = Number(new URL(location.href).searchParams.get("step")) || 0;
+        const status = document.querySelector("#status");
+
+        function shortKey(key) {
+          return typeof key === "string" ? `${key.slice(0, 8)}…` : "nicht verfügbar";
+        }
+
+        function render(eventName) {
+          const entry = globalThis.navigation?.currentEntry;
+          status.textContent = JSON.stringify(
+            {
+              event: eventName,
+              address: location.href,
+              entryKeyPreview: shortKey(entry?.key),
+              canGoBack: globalThis.navigation?.canGoBack ?? null,
+              historyLength: history.length,
+              note: "historyLength ist nur Anzeige, kein Backtrack-Entscheidungssignal.",
+            },
+            null,
+            2,
+          );
+        }
+
+        document.querySelector("#push").addEventListener("click", () => {
+          counter += 1;
+          history.pushState({ counter }, "", `?step=${counter}`);
+          render("pushState");
+        });
+
+        document.querySelector("#replace").addEventListener("click", () => {
+          counter += 1;
+          history.replaceState({ counter }, "", `?replaced=${counter}`);
+          render("replaceState");
+        });
+
+        document.querySelector("#back").addEventListener("click", () => history.back());
+        window.addEventListener("popstate", () => render("popstate"));
+        render("load");
+      })();
+    </script>
+  </body>
+</html>

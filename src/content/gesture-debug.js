@@ -566,6 +566,7 @@
     );
     if (!session.thresholdReported && thresholdOnlyBlockers.length === 0) {
       session.thresholdReported = true;
+      const navigationStateApi = globalThis.BacktrackNavigationState;
       record(
         "threshold-crossed",
         {
@@ -574,9 +575,44 @@
           semanticNavigationDirection: "UNCALIBRATED",
           notice: "Research signal only. No navigation action is performed.",
           evaluation,
+          navigationState:
+            navigationStateApi?.getDiagnosticSnapshot?.() ?? {
+              apiAvailable: false,
+              reason: "NAVIGATION_STATE_NOT_AVAILABLE_IN_THIS_FRAME",
+            },
         },
         "info",
       );
+
+      if (navigationStateApi?.requestBackDecision) {
+        void navigationStateApi
+          .requestBackDecision("gesture-threshold")
+          .then((decision) => {
+            record(
+              "back-decision",
+              {
+                sessionId: session.id,
+                decision,
+                notice: "Diagnostic only. No history or tab action is performed.",
+              },
+              "info",
+            );
+          })
+          .catch(() => {
+            record(
+              "back-decision",
+              {
+                sessionId: session.id,
+                decision: {
+                  decision: "NO_SPECIAL_ACTION",
+                  reason: "INTERNAL_ERROR",
+                },
+                notice: "Diagnostic only. No history or tab action is performed.",
+              },
+              "info",
+            );
+          });
+      }
     }
 
     queueMicrotask(() => {

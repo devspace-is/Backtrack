@@ -5,12 +5,17 @@ Brave unter macOS in einer Chromium-Erweiterung zuverlässig erkennen lässt.
 
 ## Aktueller Stand
 
-**Phase 2 – erster begrenzter Baustein.** Der Gesture-Proof-of-Concept aus
-Phase 1 bleibt unverändert nutzbar. Zusätzlich prüft ein kleiner
-Hintergrundprozess (Manifest-V3-Service-Worker) jetzt, ob ein neu geöffneter Tab
-einen noch vorhandenen, eindeutigen Ursprungstab (`openerTabId`) im selben
-Browserfenster besitzt. Die Erweiterung schließt oder aktiviert weiterhin
-keine Tabs und verändert keine Browser-History.
+**Phase 2 – zwei begrenzte Bausteine.** Der Gesture-Proof-of-Concept aus
+Phase 1 bleibt unverändert nutzbar. Ein kleiner Hintergrundprozess
+(Manifest-V3-Service-Worker) prüft, ob ein neu geöffneter Tab einen noch
+vorhandenen, eindeutigen Ursprungstab (`openerTabId`) im selben Browserfenster
+besitzt. Zusätzlich unterscheidet Backtrack jetzt zwischen interner
+Zurück-Historie und dem ursprünglichen Einstieg des Kind-Tabs. Das gilt für
+vollständige Seitenwechsel und für Einzelseiten-Apps, die
+`history.pushState()` oder `history.replaceState()` verwenden.
+
+Die Erweiterung gibt dabei nur eine Diagnoseentscheidung aus. Sie schließt
+oder aktiviert weiterhin keine Tabs und verändert keine Browser-History.
 
 Die entscheidenden echten Trackpad-Messungen ergeben ein **Conditional Go**:
 Ein begrenzter Phase-2-Prototyp ist technisch vertretbar. DOM-`preventDefault()`
@@ -18,9 +23,10 @@ stoppt Braves native Zurück-Geste nicht; `overscroll-behavior-x: contain` am
 Wurzelelement tat dies im kontrollierten Versuch. Vertikales Scrollen blieb
 ohne Fehlkandidat, und der lokale horizontale Scrollbereich blieb auch mit
 diesem Schutz bedienbar. Die sichere Herkunftsprüfung ist damit isoliert
-umgesetzt. History-Erkennung und Tab-Aktionen folgen erst in getrennten
-Schritten. Reale Tabellen, Carousels und komplexe Webanwendungen bleiben Teil
-der offenen erweiterten Kompatibilitätsmatrix.
+umgesetzt. Die konservative History-Erkennung ist ebenfalls isoliert
+umgesetzt. Tab-Aktionen folgen erst im nächsten getrennten Schritt. Reale
+Tabellen, Carousels und komplexe Webanwendungen bleiben Teil der offenen
+erweiterten Kompatibilitätsmatrix.
 
 ## Enthaltene Dateien
 
@@ -29,12 +35,23 @@ manifest.json
 package.json
 src/background/opener-message-handler.js
 src/background/opener-resolver.js
+src/background/back-decision.js
+src/background/navigation-message-handler.js
+src/background/navigation-tracker.js
 src/background/service-worker.js
 src/content/gesture-debug.js
+src/content/navigation-state.js
 src/shared/messages.js
+src/shared/navigation-snapshot.js
 docs/gesture-fixture.html
+docs/navigation-fixture.html
 docs/opener-safety.md
+docs/internal-history.md
 docs/gesture-research.md
+tests/back-decision.test.js
+tests/navigation-message-handler.test.js
+tests/navigation-snapshot.test.js
+tests/navigation-tracker.test.js
 tests/opener-message-handler.test.js
 tests/opener-resolver.test.js
 README.md
@@ -89,6 +106,36 @@ in der Konsole des Erweiterungs-Hintergrundprozesses:
 Ein Ergebnis mit `ok: true` bestätigt nur die eindeutige Herkunftsbeziehung.
 Es löst keine Navigation aus. URLs, Seitentitel und Seiteninhalte werden dabei
 weder protokolliert noch gespeichert.
+
+### Interne History prüfen
+
+Auf normalen Seiten protokolliert `[Backtrack:Navigation]` die lokale
+History-Messung. Im isolierten Backtrack-Kontext der DevTools kann die aktuelle
+Entscheidung außerdem direkt abgefragt werden:
+
+```js
+BacktrackNavigationState.requestBackDecision()
+```
+
+Die Antwort bedeutet:
+
+- `USE_INTERNAL_HISTORY`: Der Tab besitzt noch eine interne Zurückstufe.
+- `RETURN_TO_OPENER_ELIGIBLE`: Der Tab ist wieder an seinem erfassten Einstieg
+  und der Ursprung ist weiterhin sicher.
+- `NO_SPECIAL_ACTION`: Die Daten sind unvollständig, widersprüchlich oder der
+  Ursprung ist nicht mehr sicher.
+
+Alle drei Antworten sind in Version `0.3.0` reine Diagnose. Eine lokale
+Testseite für klassische und SPA-artige Wechsel ist unter
+[`docs/navigation-fixture.html`](docs/navigation-fixture.html) enthalten. Die
+technische Herleitung und alle Sicherheitsgrenzen stehen in
+[`docs/internal-history.md`](docs/internal-history.md).
+
+Der manuelle Praxistest mit Brave `152.1.94.117` bestätigte am 30. August 2026
+die vollständige Folge: Einstieg → zwei SPA-Schritte → zweimal zurück zum
+Einstieg sowie einen vollständigen Dokumentwechsel. Die jeweilige Diagnose
+wechselte erst am wirklichen Einstieg von `USE_INTERNAL_HISTORY` zu
+`RETURN_TO_OPENER_ELIGIBLE`.
 
 Jedes Protokollobjekt besitzt ein Feld `kind`:
 
@@ -275,15 +322,17 @@ Produkterkennung. Der PoC meldet bei einer Schwellenüberschreitung nur
 
 | Zugriff | Warum benötigt? | Vermeidbar? | Theoretischer Datenzugriff |
 | --- | --- | --- | --- |
-| Keine ausdrücklich angeforderte Chrome-API-Berechtigung | Der Hintergrundprozess verwendet `chrome.tabs.onCreated` und `chrome.tabs.get()` nur für nicht sensible Tab-Eigenschaften wie IDs, Fenster, angeheftet/gruppiert und `openerTabId`. Dafür verlangt Chromium keine `tabs`-Berechtigung. | Bereits vermieden. Die besonders weitreichende `tabs`-Berechtigung wird nicht eingetragen. | Ohne `tabs`-Berechtigung erhält die Erweiterung über diese API insbesondere keine freigeschalteten Felder für URL, Seitentitel oder Favicon. |
-| Automatisches Content Script auf `http://*/*` und `https://*/*` | Gesten müssen auf unterschiedlichen normalen Webseiten und möglichst früh beobachtet werden. | Für eine manuell pro Seite aktivierte Forschungsversion wäre `activeTab` möglich, würde aber Toolbar-Aktion, Service Worker und einen zusätzlichen Bedienungsschritt verlangen. Für eine Produktionsversion muss die Entscheidung neu bewertet werden. | Ein Content Script könnte grundsätzlich Seiten-DOM lesen oder verändern. Dieser PoC liest nur Ereignis-, Größen- und Scrollkontextdaten, protokolliert keine URL und sendet nichts. |
+| `storage` | `chrome.storage.session` hält die nicht sprechende Einstiegskennung im Arbeitsspeicher, auch wenn Chromium den kurzlebigen Hintergrundprozess schlafen legt und neu startet. | Nicht sicher vermeidbar. Ein verlorener Einstieg dürfte nicht durch eine erfundene neue Grundlinie ersetzt werden. | Die Berechtigung könnte theoretisch auch dauerhaften Erweiterungsspeicher öffnen. Backtrack verwendet ausschließlich den flüchtigen Sitzungsspeicher und legt dort keine URLs, Titel oder Inhalte ab. |
+| Keine `tabs`-Berechtigung | Der Hintergrundprozess verwendet `chrome.tabs.onCreated` und `chrome.tabs.get()` nur für nicht sensible Tab-Eigenschaften wie IDs, Fenster, angeheftet/gruppiert und `openerTabId`. | Bereits vermieden. | Ohne `tabs`-Berechtigung erhält die Erweiterung über diese API insbesondere keine freigeschalteten Felder für URL, Seitentitel oder Favicon. |
+| Keine `webNavigation`-Berechtigung | Vollständige Seitenwechsel und SPA-Routen werden über die Navigation API im Content Script erkannt. | Bereits vermieden. | Backtrack erhält dadurch keine zusätzliche Erweiterungs-Schnittstelle für Navigationsereignisse und Adressen. |
+| Automatisches Content Script auf `http://*/*` und `https://*/*` | Gesten und Wechsel der Browser-History müssen auf unterschiedlichen normalen Webseiten möglichst früh beobachtet werden. | Für eine manuell pro Seite aktivierte Forschungsversion wäre `activeTab` möglich, würde aber Toolbar-Aktion, Service Worker und einen zusätzlichen Bedienungsschritt verlangen. Für eine Produktionsversion muss die Entscheidung neu bewertet werden. | Ein Content Script könnte grundsätzlich Seiten-DOM lesen oder verändern. Backtrack verarbeitet nur Ereignis-, Größen- und Scrollkontextdaten sowie nicht sprechende Navigationseintrags-Kennungen. Es protokolliert keine URL und sendet nichts an einen Server. |
 
 Die Erweiterung läuft nicht auf `brave://`, `chrome://`, im Chrome Web Store
 oder auf anderen geschützten Browserseiten. `file://` ist ebenfalls nicht im
 Manifest enthalten. Unterseiten in eingebetteten Rahmen werden nur erfasst,
 wenn deren eigene Adresse ebenfalls `http://` oder `https://` verwendet.
-Die Herkunftsprüfung speichert keinen Tab-Baum und keine Browser-History. Ihre
-genauen Sicherheitsregeln stehen in
+Die Herkunftsprüfung speichert keinen dauerhaften Tab-Baum und keine Adressen
+aus der Browser-History. Ihre genauen Sicherheitsregeln stehen in
 [`docs/opener-safety.md`](docs/opener-safety.md).
 
 ## Bekannte Grenzen des PoC
@@ -299,11 +348,20 @@ genauen Sicherheitsregeln stehen in
 - Die Messpuffer mehrerer eingebetteter Seitenrahmen sind voneinander getrennt.
 - Die hier erkannten Richtungen sind noch nicht semantisch als `BACK_GESTURE`
   oder `FORWARD_GESTURE` kalibriert.
+- Tabs, die bereits vor dem Laden oder Neuladen der Erweiterung offen waren,
+  erhalten aus Sicherheitsgründen keinen nachträglich erfundenen Einstieg.
+- Nach einem Browserneustart oder Erweiterungs-Neuladen ist der flüchtige
+  History-Zustand weg. Der betroffene Tab bleibt dann unangetastet.
+- Geschützte Browserseiten, auf denen kein Content Script laufen darf, liefern
+  keine History-Messung und führen zu keiner besonderen Aktion.
 
 ## Quellen für die technische Ausgangslage
 
 - [Chrome-Dokumentation zu Content Scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts)
 - [Chrome-Dokumentation zur Tabs API](https://developer.chrome.com/docs/extensions/reference/api/tabs)
+- [Chrome-Dokumentation zur Navigation API](https://developer.chrome.com/docs/web-platform/navigation-api/)
+- [WHATWG-Spezifikation der Navigation API](https://html.spec.whatwg.org/multipage/nav-history-apis.html)
+- [Chrome-Dokumentation zur Storage API](https://developer.chrome.com/docs/extensions/reference/api/storage/)
 - [Chrome-Dokumentation zu Erweiterungs-Service-Workern](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/basics)
 - [UI-Events-Spezifikation des W3C](https://www.w3.org/TR/uievents/)
 - [Chromiums macOS-`HistorySwiper`](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_history_swiper.h)
@@ -313,7 +371,8 @@ genauen Sicherheitsregeln stehen in
 ## Noch ausdrücklich nicht enthalten
 
 - `chrome.tabs.remove()` oder `chrome.tabs.update()`
-- History- oder SPA-Verfolgung
-- gespeicherter Tab-Baum
+- tatsächliches Zurücknavigieren innerhalb des Tabs
+- Aktivieren oder Schließen des Ursprungstabs
+- dauerhaft gespeicherter Tab-Baum oder dauerhaft gespeicherte Browser-History
 - Optionsseite
 - Telemetrie, Serverzugriffe oder dauerhafte Speicherung

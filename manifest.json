@@ -1,8 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Backtrack Development",
-  "version": "0.2.0",
-  "description": "Local development build for safe cross-tab back navigation research in Chromium browsers.",
+  "version": "0.3.0",
+  "description": "Local development build for safe opener and internal-history navigation research.",
+  "permissions": [
+    "storage"
+  ],
   "background": {
     "service_worker": "src/background/service-worker.js",
     "type": "module"
@@ -14,6 +17,8 @@
         "https://*/*"
       ],
       "js": [
+        "src/shared/navigation-snapshot.js",
+        "src/content/navigation-state.js",
         "src/content/gesture-debug.js"
       ],
       "run_at": "document_start",

@@ -68,17 +68,25 @@ Die Prüfung verarbeitet nur kurzlebige Tab-Metadaten im Hintergrundprozess:
 - aktiv, angeheftet, verworfen, privat und Gruppen-ID.
 
 Die ausgegebenen Diagnoseobjekte enthalten keine URL, keinen Seitentitel, kein
-Favicon und keinen Seiteninhalt. Es gibt keine lokale Datenbank, keinen
-Storage-Zugriff, keine Telemetrie und keine Serververbindung.
+Favicon und keinen Seiteninhalt. Seit Version `0.3.0` nutzt der getrennte
+History-Baustein den flüchtigen Sitzungsspeicher (`storage.session`) für
+nicht sprechende Navigationseintrags-Kennungen. Es gibt weiterhin keine lokale
+Datenbank, keine dauerhafte Speicherung, keine Telemetrie und keine
+Serververbindung.
 
 ## Berechtigung
 
-Das Manifest fordert weiterhin keine Chrome-API-Berechtigung an. Laut
+Das Manifest fordert weiterhin keine `tabs`-Berechtigung an. Laut
 [Chrome-Dokumentation zur Tabs API](https://developer.chrome.com/docs/extensions/reference/api/tabs)
 können die meisten Funktionen der API ohne zusätzliche Berechtigung verwendet
 werden. Die `tabs`-Berechtigung wird insbesondere für sensible Eigenschaften
 wie URL, Seitentitel und Favicon benötigt; Backtrack greift auf diese Felder
 nicht zu.
+
+Die seit Version `0.3.0` eingetragene Berechtigung `storage` gehört zum
+getrennten History-Baustein. Warum dort ausschließlich `storage.session`
+verwendet wird, ist in
+[`internal-history.md`](internal-history.md) dokumentiert.
 
 Der Hintergrundprozess ist als Modul-Service-Worker im Manifest eingetragen.
 Die Ereignisempfänger werden entsprechend der
