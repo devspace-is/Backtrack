@@ -435,7 +435,9 @@ middle position so both directions can be tested.
   no reliable momentum phase.
 
 The complete evidence matrix is in
-[gesture-research.md](docs/gesture-research.md).
+[gesture-research.md](docs/gesture-research.md). The version `0.5.0` automated
+suite and calibrated physical end-to-end results are recorded separately in
+[regression-matrix.md](docs/regression-matrix.md).
 
 ## Conservative gesture policy
 

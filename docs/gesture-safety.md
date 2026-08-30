@@ -180,13 +180,16 @@ physical blocker `UNTRUSTED_EVENT`; no navigation request occurred. Explicit
 `contain`. This confirms the browser wiring for safe defaults, settings,
 containment, completed-sequence classification, and synthetic-event rejection.
 
-This smoke test does not count as a new physical-trackpad run. The real
-two-finger evidence remains the Phase 1 matrix, and a calibrated physical
-end-to-end child-tab run remains part of the manual validation below.
+This smoke test by itself did not count as a new physical-trackpad run. A later
+calibrated version `0.5.0` run completed the core vertical-scroll,
+horizontal-scroller, entry-point action, and multi-step internal-history cases.
+See [regression-matrix.md](regression-matrix.md) for the measured values and
+visible browser outcomes.
 
 ## Remaining manual validation
 
-Before calling version 1 production-ready, repeat real two-finger tests across:
+The core regression gate passed on the recorded Brave/macOS setup. Before
+calling version 1 production-ready, extend real two-finger coverage across:
 
 - Natural Scrolling on and off;
 - slow, normal, and fast back gestures;
