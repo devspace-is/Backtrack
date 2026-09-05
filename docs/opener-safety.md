@@ -80,8 +80,12 @@ The validation processes only short-lived tab metadata in the background:
 
 Diagnostic objects contain no URL, page title, favicon, or page content. Since
 version `0.3.0`, the separate history component uses volatile session storage
-(`storage.session`) for opaque navigation-entry keys. There is still no local
-database, persistent storage, telemetry, or server connection.
+(`storage.session`) for opaque navigation-entry keys. Version `0.6.3` adds a
+separate bounded local diagnostic ring for development: it accepts only
+whitelisted numeric tab/window IDs, rounded gesture thresholds, and action or
+decision codes. It explicitly rejects URLs, titles, page text, raw wheel
+events, arbitrary page data, and browsing history. There is no telemetry or
+server connection.
 
 ## Permission
 
@@ -91,9 +95,11 @@ most Tabs API functions can be used without an additional permission. The
 `tabs` permission is primarily required for sensitive properties such as URL,
 page title, and favicon; Backtrack does not access those fields.
 
-The `storage` permission added in version `0.3.0` belongs to the separate
-history component. [`internal-history.md`](internal-history.md) documents why
-that component uses only `storage.session`.
+The `storage` permission added in version `0.3.0` belongs primarily to the
+separate history component. [`internal-history.md`](internal-history.md)
+documents why that component uses only `storage.session`. Version `0.6.3` also
+uses `storage.local` for the user-selected direction, enabled state, and the
+bounded privacy-filtered diagnostic ring described above.
 
 Version `0.5.1` adds the `webNavigation` permission solely for
 `onCreatedNavigationTarget`. The event can theoretically expose the URL being

@@ -9,7 +9,7 @@
     return;
   }
 
-  const VERSION = "0.6.2";
+  const VERSION = "0.6.3";
   const LOG_PREFIX = "[Backtrack:Gesture]";
   const SESSION_SUMMARY_PREFIX = "[Backtrack:Gesture:SessionJSON]";
   const THRESHOLD_SUMMARY_PREFIX = "[Backtrack:Gesture:ThresholdJSON]";
@@ -23,6 +23,11 @@
   const ROOT_OVERSCROLL_MODES = new Set(["unchanged", "contain", "none"]);
   const GESTURE_SETTINGS_KEY = "backtrack.gesture.settings";
   const GESTURE_SETTINGS_SCHEMA_VERSION = 2;
+  const DIAGNOSTIC_MESSAGE_TYPES = Object.freeze({
+    RECORD: "BACKTRACK_RECORD_GESTURE_DIAGNOSTIC",
+    GET: "BACKTRACK_GET_DIAGNOSTIC_LOG",
+    CLEAR: "BACKTRACK_CLEAR_DIAGNOSTIC_LOG",
+  });
   const ACTION_FINISH_REASONS = new Set(["settled", "gap-before-next-event"]);
 
   const classifier = globalThis.BacktrackGestureClassifier;
@@ -77,6 +82,7 @@
   let automaticActionInFlight = false;
   let nativeRootBack = false;
   let pendingNativeRootBack = null;
+  let lastRecordedGestureOwner = null;
   let ownershipRequestSequence = 0;
   let semanticSettingsLoaded = false;
   let lastCompletedSession = null;
@@ -146,6 +152,52 @@
     }
 
     return entry;
+  }
+
+  function sendDiagnosticMessage(type, details = {}) {
+    if (frameContext.kind !== "TOP") {
+      return null;
+    }
+    try {
+      const request = chrome.runtime.sendMessage({ type, ...details });
+      if (request && typeof request.catch === "function") {
+        request.catch(() => undefined);
+      }
+      return request;
+    } catch {
+      return null;
+    }
+  }
+
+  function persistGestureSummary(summary) {
+    const evaluation = summary?.evaluation;
+    const measurements = evaluation?.measurements;
+    // Do not retain ordinary vertical scrolling in the persistent diagnostic
+    // ring. A small horizontal amount is enough to investigate a missed back
+    // candidate without turning it into a record of every scroll.
+    if (
+      !summary?.actionTiming?.requested &&
+      (!Number.isFinite(measurements?.netHorizontalDistancePx) ||
+        measurements.netHorizontalDistancePx < 80)
+    ) {
+      return;
+    }
+    sendDiagnosticMessage(DIAGNOSTIC_MESSAGE_TYPES.RECORD, {
+      diagnostic: {
+        kind: "GESTURE_SESSION",
+        classification: evaluation?.classification,
+        semanticDirection: evaluation?.semanticNavigationDirection,
+        blockers: evaluation?.automaticAction?.blockers,
+        netHorizontalDistancePx: measurements?.netHorizontalDistancePx,
+        horizontalDominanceRatio: measurements?.horizontalDominanceRatio,
+        directionConsistency: measurements?.directionConsistency,
+        eventCount: measurements?.eventCount,
+        peakHorizontalDeltaPx: measurements?.peakHorizontalDeltaPx,
+        automaticActionRequested: summary?.actionTiming?.requested,
+        automaticActionTrigger: summary?.actionTiming?.trigger,
+        actionRequestedAfterMs: summary?.actionTiming?.requestedAfterMs,
+      },
+    });
   }
 
   function normalizeDeltas(event) {
@@ -484,6 +536,7 @@
 
     lastCompletedSession = summary;
     record("session-end", summary, "info");
+    persistGestureSummary(summary);
     if (
       !shouldAttemptAutomaticAction &&
       !session.automaticActionRequested &&
@@ -1055,10 +1108,22 @@
     if (nativeRootBack) {
       gestureIndicator?.hide({ delayMs: 0 });
     }
-    record("gesture-ownership", {
-      owner: nativeRootBack ? "BROWSER" : "BACKTRACK",
-      reason: nativeRootBack ? "NO_OPENER" : "CHILD_OR_UNCONFIRMED",
-    }, "info");
+    const owner = nativeRootBack ? "BROWSER" : "BACKTRACK";
+    // Pages can become visible or emit a Navigation API update repeatedly.
+    // One ownership record is useful; identical records would crowd out the
+    // gesture that we actually need to diagnose.
+    if (owner !== lastRecordedGestureOwner) {
+      lastRecordedGestureOwner = owner;
+      const reason = nativeRootBack ? "NO_OPENER" : "CHILD_OR_UNCONFIRMED";
+      record("gesture-ownership", { owner, reason }, "info");
+      sendDiagnosticMessage(DIAGNOSTIC_MESSAGE_TYPES.RECORD, {
+        diagnostic: {
+          kind: "GESTURE_OWNERSHIP",
+          owner,
+          reason,
+        },
+      });
+    }
   }
 
   async function refreshGestureOwnership() {
@@ -1241,6 +1306,26 @@
     finishSession,
     clearLog,
     getSemanticSettings: () => ({ ...semanticSettings }),
+    getPersistentDiagnosticLog: async () => {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: DIAGNOSTIC_MESSAGE_TYPES.GET,
+        });
+        return Array.isArray(response?.entries) ? response.entries : [];
+      } catch {
+        return [];
+      }
+    },
+    clearPersistentDiagnosticLog: async () => {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: DIAGNOSTIC_MESSAGE_TYPES.CLEAR,
+        });
+        return response?.cleared === true;
+      } catch {
+        return false;
+      }
+    },
     calibrateBackDirection,
     disableAutomaticActions,
     clearCalibration,

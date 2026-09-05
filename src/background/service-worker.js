@@ -4,10 +4,12 @@ import { GestureActionGate } from "./gesture-action-gate.js";
 import { NavigationTracker } from "./navigation-tracker.js";
 import { createNavigationTargetListener } from "./navigation-target-handler.js";
 import { resolveSafeOpener } from "./opener-resolver.js";
+import { DiagnosticLog } from "./diagnostic-log.js";
 
 const LOG_PREFIX = "[Backtrack:Opener]";
 const navigationTracker = new NavigationTracker(chrome.storage.session);
 const gestureActionGate = new GestureActionGate(chrome.storage.session);
+const diagnosticLog = new DiagnosticLog(chrome.storage.local);
 
 chrome.runtime.onMessage.addListener(
   createOpenerMessageListener(chrome.tabs),
@@ -17,6 +19,7 @@ chrome.runtime.onMessage.addListener(
     chrome.tabs,
     navigationTracker,
     gestureActionGate,
+    diagnosticLog,
   ),
 );
 

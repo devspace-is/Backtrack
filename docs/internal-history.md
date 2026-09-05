@@ -113,10 +113,13 @@ This session storage:
 - stores only tab IDs, the opener tab ID, opaque entry keys, and a few status
   values for Backtrack.
 
-The permission could theoretically also allow persistent extension storage,
-but Backtrack calls only `storage.session`. Without it, the entry point would
-become unknown after a routine background-process restart. Inventing a new
-baseline would be more dangerous than keeping this small volatile state.
+The permission could theoretically also allow persistent extension storage.
+The history component itself calls only `storage.session`; since version
+`0.6.3`, a separate privacy-filtered diagnostic ring uses `storage.local` for
+at most 160 compact records. It contains no URLs, titles, page text, raw wheel
+events, or browser-history entries. Without session storage, the entry point
+would become unknown after a routine background-process restart. Inventing a
+new baseline would be more dangerous than keeping this small volatile state.
 
 Version `0.5.1` uses the `webNavigation` permission only for
 `onCreatedNavigationTarget`, which supplies an exact source-to-child tab

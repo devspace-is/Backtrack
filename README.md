@@ -264,6 +264,40 @@ gesture. In the tested Brave version, DevTools docked on the right prevented
 native two-finger back navigation by itself. DevTools is useful for capturing
 events but cannot alone prove that Backtrack suppressed browser navigation.
 
+### Persistent diagnostic ring
+
+For an intermittent missed close, Backtrack also keeps the most recent 160
+meaningful gesture and action decisions in an on-device diagnostic ring. It
+survives a page, tab, extension-service-worker, or browser restart, and is
+overwritten from oldest to newest once it is full. This is a development aid,
+not telemetry: nothing is sent anywhere.
+
+On any ordinary `http://` or `https://` page, choose **Backtrack Development**
+in DevTools' JavaScript context and run:
+
+```js
+await BacktrackGestureDebug.getPersistentDiagnosticLog()
+```
+
+The important sequence is normally one `GESTURE_SESSION` followed by a
+`BACK_ACTION`. The session shows whether the movement became an action
+candidate (and which safety blocker stopped it); the action shows the resolved
+decision, for example `RETURNED_TO_OPENER`, `USE_INTERNAL_HISTORY`, or
+`NO_SPECIAL_ACTION` with its exact reason. `GESTURE_OWNERSHIP` explains whether
+the current tab was intentionally left to Brave's normal navigation.
+
+Clear the ring after we have inspected an incident:
+
+```js
+await BacktrackGestureDebug.clearPersistentDiagnosticLog()
+```
+
+The ring keeps only a whitelisted, compact diagnostic schema: numeric tab and
+window IDs; gesture classification, direction, and rounded threshold values;
+and action/decision reason codes. It rejects URLs, page titles, page text, raw
+wheel events, arbitrary page data, and browser history. Ordinary vertical
+scrolling is not written to the persistent ring.
+
 ### Inspect opener validation in the background
 
 1. Open `brave://extensions`.
@@ -412,8 +446,8 @@ await BacktrackGestureDebug.clearCalibration()
 ```
 
 Calibration stores only the direction and enabled/disabled state in local
-extension storage. It stores no address, page content, gesture log, or browser
-history. Automatic actions require computed root
+extension storage. The separate, bounded diagnostic ring above stores no
+address, page content, raw wheel events, or browser history. Automatic actions require computed root
 `overscroll-behavior-x: contain`; a failed containment check becomes a no-op.
 
 Clear the measurement buffer:
@@ -434,10 +468,10 @@ Export measurements as JSON:
 copy(BacktrackGestureDebug.exportJson())
 ```
 
-Gesture measurements remain only in the memory of the current page frame.
+Raw gesture measurements remain only in the memory of the current page frame.
 Reloading or closing the page removes them. They are never transmitted or
-stored persistently. Only the explicit direction calibration described above
-survives a reload.
+stored persistently. The direction calibration and the separate compact
+diagnostic ring described above survive a reload.
 
 ### Controlled `preventDefault()` experiment
 
@@ -566,7 +600,7 @@ and its conservative tradeoffs are documented in
 
 | Access | Why needed? | Can it be avoided? | Theoretical data access |
 | --- | --- | --- | --- |
-| `storage` | `chrome.storage.session` keeps opaque child-entry and short gesture-cooldown state across service-worker suspension. `chrome.storage.local` keeps the user's explicit direction calibration and enabled/disabled choice. | Not safely for the current design. Losing an entry baseline or momentum claim must fail closed, and the chosen direction must survive page reloads. | The permission could also store arbitrary extension data. Backtrack stores no URLs, titles, page content, gesture logs, or browsing history. |
+| `storage` | `chrome.storage.session` keeps opaque child-entry and short gesture-cooldown state across service-worker suspension. `chrome.storage.local` keeps the user's explicit direction calibration and enabled/disabled choice plus a bounded, local diagnostic ring of 160 safe summaries. | Not safely for the current design. Losing an entry baseline or momentum claim must fail closed, the chosen direction must survive page reloads, and an intermittent issue needs evidence across tab closure. | The permission could also store arbitrary extension data. Backtrack stores only the documented diagnostic schema: numeric tab/window IDs, rounded gesture-threshold values, classification, and action/decision codes. It stores no URLs, titles, page content, raw wheel events, or browsing history. |
 | `webNavigation` | `onCreatedNavigationTarget` supplies the exact source-tab and child-tab IDs when Brave omits `openerTabId` for a link-created tab. Backtrack ignores the event URL and keeps only the two numeric IDs in session memory. | Avoiding it caused real link-created tabs to fail with `NO_OPENER`. Inferring the source from the active tab or tab position would be unsafe. | The API can theoretically expose navigation events and their URLs. Backtrack subscribes only to the new-target event, does not log or store its URL, and contacts no server. |
 | No `tabs` permission | The background uses tab lifecycle events plus `chrome.tabs.get()`, `chrome.tabs.update()`, and `chrome.tabs.remove()` for IDs, state validation, activation, and exact child closure. These operations do not require the broad permission. | Already avoided. | Without `tabs`, the API does not expose privileged URL, title, or favicon fields to Backtrack. |
 | Automatic content script on `http://*/*` and `https://*/*` | Gesture and history changes must be observed early across ordinary websites. | An `activeTab` research build is possible but would require a toolbar action, service worker, and an extra step on every page. Reassess before production. | A content script could theoretically read or alter page DOM. Backtrack processes only event, geometry, scroll-context, and opaque navigation-entry data. It logs no URL and contacts no server. |
@@ -591,7 +625,9 @@ Subframes are included only when their own address matches `http://` or
   script.
 - Sites with custom JavaScript gesture logic may look like ordinary scroll
   areas or evade DOM scroll detection entirely.
-- DevTools Preserve log is required if logs must survive real navigation.
+- DevTools Preserve log is still useful for the raw per-page research log. The
+  separate persistent diagnostic ring is available after real navigation and
+  tab closure.
 - Measurement buffers in embedded frames are separate.
 - Direction calibration currently uses the isolated development API; there is
   no user-facing calibration screen yet.
@@ -628,5 +664,5 @@ Subframes are included only when their own address matches `http://` or
 - automatic tab action before explicit direction calibration;
 - a persistently stored tab tree or browser history;
 - an options page;
-- telemetry, server access, persistent gesture logs, or browsing-history
+- telemetry, server access, a persistent tab tree, or browsing-history
   storage.
