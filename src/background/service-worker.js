@@ -2,6 +2,7 @@ import { createOpenerMessageListener } from "./opener-message-handler.js";
 import { createNavigationMessageListener } from "./navigation-message-handler.js";
 import { GestureActionGate } from "./gesture-action-gate.js";
 import { NavigationTracker } from "./navigation-tracker.js";
+import { createNavigationTargetListener } from "./navigation-target-handler.js";
 import { resolveSafeOpener } from "./opener-resolver.js";
 
 const LOG_PREFIX = "[Backtrack:Opener]";
@@ -50,6 +51,10 @@ chrome.tabs.onCreated.addListener((tab) => {
     });
 });
 
+chrome.webNavigation.onCreatedNavigationTarget.addListener(
+  createNavigationTargetListener(chrome.tabs, navigationTracker),
+);
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   void navigationTracker.remove(tabId);
   void gestureActionGate.remove(tabId);
@@ -60,4 +65,8 @@ chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
   void navigationTracker.remove(addedTabId);
   void gestureActionGate.remove(removedTabId);
   void gestureActionGate.remove(addedTabId);
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  void gestureActionGate.removeWindow(windowId);
 });

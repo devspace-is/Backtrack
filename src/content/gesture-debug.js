@@ -9,7 +9,7 @@
     return;
   }
 
-  const VERSION = "0.2.0";
+  const VERSION = "0.6.2";
   const LOG_PREFIX = "[Backtrack:Gesture]";
   const SESSION_SUMMARY_PREFIX = "[Backtrack:Gesture:SessionJSON]";
   const THRESHOLD_SUMMARY_PREFIX = "[Backtrack:Gesture:ThresholdJSON]";
@@ -26,10 +26,24 @@
   const ACTION_FINISH_REASONS = new Set(["settled", "gap-before-next-event"]);
 
   const classifier = globalThis.BacktrackGestureClassifier;
-  if (!classifier) {
+  const commitPolicy = globalThis.BacktrackGestureCommitPolicy;
+  const visualPolicy = globalThis.BacktrackGestureVisualPolicy;
+  const gestureIndicator = globalThis.BacktrackGestureIndicator ?? null;
+  if (
+    !classifier ||
+    !commitPolicy ||
+    !visualPolicy ||
+    (window === window.top && !gestureIndicator)
+  ) {
     console.info(LOG_PREFIX, {
       kind: "initialization-error",
-      reason: "GESTURE_CLASSIFIER_UNAVAILABLE",
+      reason: !classifier
+        ? "GESTURE_CLASSIFIER_UNAVAILABLE"
+        : !commitPolicy
+          ? "GESTURE_COMMIT_POLICY_UNAVAILABLE"
+          : !visualPolicy
+            ? "GESTURE_VISUAL_POLICY_UNAVAILABLE"
+            : "GESTURE_INDICATOR_UNAVAILABLE",
     });
     return;
   }
@@ -55,10 +69,15 @@
   let activeSession = null;
   /** @type {number | null} */
   let settleTimer = null;
+  /** @type {number | null} */
+  let earlyCommitTimer = null;
   let logSequence = 0;
   let sessionSequence = 0;
   let listening = false;
   let automaticActionInFlight = false;
+  let nativeRootBack = false;
+  let pendingNativeRootBack = null;
+  let ownershipRequestSequence = 0;
   let semanticSettingsLoaded = false;
   let lastCompletedSession = null;
   let semanticSettings = {
@@ -290,7 +309,13 @@
       peakHorizontalDelta: 0,
       peakHorizontalEventIndex: 0,
       thresholdReported: false,
+      earlyCommitArmedAtMs: null,
+      automaticActionRequested: false,
+      automaticActionTrigger: null,
+      automaticActionRequestedAtMs: null,
       startPosition: null,
+      visualIndicatorShown: false,
+      visualIndicatorPhase: "hidden",
     };
   }
 
@@ -307,20 +332,71 @@
     });
   }
 
-  function finishSession(reason = "manual") {
-    if (!activeSession) {
-      return null;
+  function earlyCommitEvaluation(session) {
+    return commitPolicy.evaluate(session, {
+      backDirection: semanticSettings.backDirection,
+      automaticActionsEnabled:
+        semanticSettingsLoaded && semanticSettings.automaticActionsEnabled,
+    });
+  }
+
+  function visualEvaluation(session) {
+    return visualPolicy.evaluate(session, {
+      backDirection: semanticSettings.backDirection,
+      automaticActionsEnabled:
+        semanticSettingsLoaded && semanticSettings.automaticActionsEnabled,
+    });
+  }
+
+  function updateGestureIndicator(session, requestedPhase = null) {
+    if (frameContext.kind !== "TOP" || !gestureIndicator) {
+      return false;
     }
 
-    if (settleTimer !== null) {
-      clearTimeout(settleTimer);
-      settleTimer = null;
+    const evaluation = visualEvaluation(session);
+    if (!evaluation.eligible) {
+      if (session.visualIndicatorShown) {
+        gestureIndicator.hide();
+        session.visualIndicatorShown = false;
+        session.visualIndicatorPhase = "cancelled";
+        record("gesture-indicator-hidden", {
+          sessionId: session.id,
+          blockers: evaluation.classification.automaticAction.blockers,
+        });
+      }
+      return false;
     }
 
-    const session = activeSession;
-    activeSession = null;
-    const evaluation = candidateEvaluation(session);
-    const summary = {
+    const phase =
+      requestedPhase === "armed" || session.earlyCommitArmedAtMs !== null
+        ? "armed"
+        : "tracking";
+    const firstAppearance = !session.visualIndicatorShown;
+    const phaseChanged = session.visualIndicatorPhase !== phase;
+    gestureIndicator.update({
+      progress: evaluation.progress,
+      clientY: session.startPosition?.clientY,
+      phase,
+    });
+    session.visualIndicatorShown = true;
+    session.visualIndicatorPhase = phase;
+
+    if (firstAppearance || phaseChanged) {
+      record(firstAppearance ? "gesture-indicator-shown" : "gesture-indicator-phase", {
+        sessionId: session.id,
+        phase,
+        progress: round(evaluation.progress),
+      });
+    }
+    return true;
+  }
+
+  function createSessionSummary(
+    session,
+    reason,
+    evaluation = candidateEvaluation(session),
+  ) {
+    return {
       sessionId: session.id,
       startedAtEpochMs: session.startedAtEpochMs,
       reason,
@@ -365,21 +441,71 @@
         heuristic: "DECAY_TAIL_ONLY",
         possibleTailEventCount: session.possibleMomentumTailEventCount,
       },
+      actionTiming: {
+        earlyCommitArmedAfterMs:
+          session.earlyCommitArmedAtMs === null
+            ? null
+            : round(session.earlyCommitArmedAtMs - session.startedAtMs),
+        requested: session.automaticActionRequested,
+        trigger: session.automaticActionTrigger,
+        requestedAfterMs:
+          session.automaticActionRequestedAtMs === null
+            ? null
+            : round(
+                session.automaticActionRequestedAtMs - session.startedAtMs,
+              ),
+      },
       evaluation,
     };
+  }
+
+  function finishSession(reason = "manual") {
+    if (!activeSession) {
+      return null;
+    }
+
+    if (settleTimer !== null) {
+      clearTimeout(settleTimer);
+      settleTimer = null;
+    }
+    if (earlyCommitTimer !== null) {
+      clearTimeout(earlyCommitTimer);
+      earlyCommitTimer = null;
+    }
+
+    const session = activeSession;
+    activeSession = null;
+    const evaluation = candidateEvaluation(session);
+    const summary = createSessionSummary(session, reason, evaluation);
+    const shouldAttemptAutomaticAction =
+      ACTION_FINISH_REASONS.has(reason) &&
+      !session.automaticActionRequested &&
+      summary.evaluation.automaticAction.eligible;
 
     lastCompletedSession = summary;
     record("session-end", summary, "info");
-    if (ACTION_FINISH_REASONS.has(reason)) {
-      void maybePerformAutomaticAction(summary);
+    if (
+      !shouldAttemptAutomaticAction &&
+      !session.automaticActionRequested &&
+      session.visualIndicatorShown
+    ) {
+      gestureIndicator?.hide();
+      session.visualIndicatorShown = false;
+      session.visualIndicatorPhase = "cancelled";
+    }
+    if (shouldAttemptAutomaticAction) {
+      void maybePerformAutomaticAction(summary, session, "SESSION_END");
+    } else {
+      applyPendingGestureOwnership();
     }
     return summary;
   }
 
-  async function maybePerformAutomaticAction(summary) {
+  async function maybePerformAutomaticAction(summary, session, trigger) {
     if (
       frameContext.kind !== "TOP" ||
       !summary?.evaluation?.automaticAction?.eligible ||
+      session?.automaticActionRequested ||
       automaticActionInFlight
     ) {
       return;
@@ -403,6 +529,7 @@
         },
         "info",
       );
+      gestureIndicator?.hide();
       return;
     }
 
@@ -416,10 +543,17 @@
         },
         "info",
       );
+      gestureIndicator?.hide();
       return;
     }
 
+    if (session) {
+      session.automaticActionRequested = true;
+      session.automaticActionTrigger = trigger;
+      session.automaticActionRequestedAtMs = performance.now();
+    }
     automaticActionInFlight = true;
+    gestureIndicator?.commit();
     try {
       const response = await navigationStateApi.requestAutomaticBackAction({
         id: summary.sessionId,
@@ -430,6 +564,13 @@
         { sessionId: summary.sessionId, response },
         "info",
       );
+      if (
+        response?.action !== "USE_INTERNAL_HISTORY" &&
+        response?.action !== "USE_BROWSER_HISTORY" &&
+        response?.action !== "RETURNED_TO_OPENER"
+      ) {
+        gestureIndicator?.hide({ delayMs: 0 });
+      }
     } catch {
       record(
         "automatic-back-action",
@@ -442,9 +583,73 @@
         },
         "info",
       );
+      gestureIndicator?.hide({ delayMs: 0 });
     } finally {
       automaticActionInFlight = false;
+      applyPendingGestureOwnership();
     }
+  }
+
+  function considerEarlyCommit(session) {
+    if (
+      frameContext.kind !== "TOP" ||
+      session.automaticActionRequested ||
+      earlyCommitTimer !== null
+    ) {
+      return;
+    }
+
+    const initial = earlyCommitEvaluation(session);
+    if (!initial.eligible) {
+      return;
+    }
+
+    session.earlyCommitArmedAtMs = performance.now();
+    updateGestureIndicator(session, "armed");
+    record(
+      "early-commit-armed",
+      {
+        sessionId: session.id,
+        armedAfterMs: round(
+          session.earlyCommitArmedAtMs - session.startedAtMs,
+        ),
+        confirmationMs: initial.confirmationMs,
+        evaluation: initial.classification,
+      },
+      "info",
+    );
+
+    earlyCommitTimer = window.setTimeout(() => {
+      earlyCommitTimer = null;
+      if (activeSession !== session || session.automaticActionRequested) {
+        return;
+      }
+
+      const confirmed = earlyCommitEvaluation(session);
+      if (!confirmed.eligible) {
+        session.earlyCommitArmedAtMs = null;
+        record("early-commit-disarmed", {
+          sessionId: session.id,
+          evaluation: confirmed.classification,
+        });
+        updateGestureIndicator(session);
+        return;
+      }
+
+      const summary = createSessionSummary(session, "early-commit");
+      record(
+        "gesture-committed",
+        {
+          sessionId: session.id,
+          decisionAfterMs: round(performance.now() - session.startedAtMs),
+          evaluation: confirmed.classification,
+          notice:
+            "The stronger early policy remained eligible through its confirmation window.",
+        },
+        "info",
+      );
+      void maybePerformAutomaticAction(summary, session, "EARLY_COMMIT");
+    }, initial.confirmationMs);
   }
 
   function scheduleSessionFinish() {
@@ -471,6 +676,11 @@
   }
 
   function handleWheel(event) {
+    // A root tab has no cross-tab return to implement. Leave its input stream,
+    // native gesture animation, and gesture/momentum boundaries to Chromium.
+    if (nativeRootBack) {
+      return;
+    }
     const now = performance.now();
     const normalized = normalizeDeltas(event);
 
@@ -479,6 +689,10 @@
       now - activeSession.lastEventAtMs > config.sessionGapMs
     ) {
       finishSession("gap-before-next-event");
+    }
+
+    if (nativeRootBack) {
+      return;
     }
 
     if (!activeSession) {
@@ -676,7 +890,7 @@
           semanticNavigationDirection:
             evaluation.semanticNavigationDirection,
           notice:
-            "Provisional research signal only. Any automatic action waits for the completed session and all safety checks.",
+            "Provisional base threshold only. Early action requires the stronger commit policy and its confirmation window.",
           evaluation,
           navigationState:
             navigationStateApi?.getDiagnosticSnapshot?.() ?? {
@@ -702,8 +916,12 @@
           notice: "A later page listener appears to have canceled this event.",
         });
       }
+      if (activeSession === session && !session.automaticActionRequested) {
+        updateGestureIndicator(session);
+      }
     });
 
+    considerEarlyCommit(session);
     scheduleSessionFinish();
   }
 
@@ -821,13 +1039,64 @@
     };
   }
 
+  function applyPendingGestureOwnership() {
+    // Never release containment halfway through a movement or an action: that
+    // could let Chromium and Backtrack act on the same movement.
+    if (pendingNativeRootBack === null || activeSession || automaticActionInFlight) {
+      return;
+    }
+    nativeRootBack = pendingNativeRootBack;
+    pendingNativeRootBack = null;
+    applyRootOverscrollBehavior(
+      semanticSettings.automaticActionsEnabled && !nativeRootBack
+        ? "contain"
+        : "unchanged",
+    );
+    if (nativeRootBack) {
+      gestureIndicator?.hide({ delayMs: 0 });
+    }
+    record("gesture-ownership", {
+      owner: nativeRootBack ? "BROWSER" : "BACKTRACK",
+      reason: nativeRootBack ? "NO_OPENER" : "CHILD_OR_UNCONFIRMED",
+    }, "info");
+  }
+
+  async function refreshGestureOwnership() {
+    if (frameContext.kind !== "TOP" || !semanticSettings.automaticActionsEnabled) {
+      return;
+    }
+    const requestSequence = ++ownershipRequestSequence;
+    pendingNativeRootBack = null;
+    try {
+      // This uses both Chromium's openerTabId and the exact navigation-target
+      // fallback. Missing Navigation API history is NOT evidence of a root tab.
+      const decision = await globalThis.BacktrackNavigationState?.requestBackDecision?.(
+        "gesture-ownership",
+      );
+      if (requestSequence !== ownershipRequestSequence) {
+        return;
+      }
+      pendingNativeRootBack = decision?.reason === "NO_OPENER";
+      applyPendingGestureOwnership();
+    } catch {
+      // Keep the existing mode on a transient error. In particular, an error
+      // must not take native Back away from a previously verified root tab.
+    }
+  }
+
   function applySemanticSettings(value, source) {
+    ++ownershipRequestSequence;
+    pendingNativeRootBack = null;
     semanticSettings = normalizeSemanticSettings(value);
     semanticSettingsLoaded = true;
     if (frameContext.kind === "TOP") {
+      if (!semanticSettings.automaticActionsEnabled) {
+        nativeRootBack = false;
+      }
       applyRootOverscrollBehavior(
-        semanticSettings.automaticActionsEnabled ? "contain" : "unchanged",
+        semanticSettings.automaticActionsEnabled && !nativeRootBack ? "contain" : "unchanged",
       );
+      void refreshGestureOwnership();
     }
     record(
       "semantic-settings-change",
@@ -932,6 +1201,24 @@
     record("log-cleared", {}, "info");
   }
 
+  function previewIndicator(progress = 0.65, phase = "tracking") {
+    if (frameContext.kind !== "TOP" || !gestureIndicator) {
+      return false;
+    }
+    if (phase !== "tracking" && phase !== "armed") {
+      throw new TypeError('Indicator phase must be "tracking" or "armed".');
+    }
+    return gestureIndicator.update({
+      progress,
+      clientY: window.innerHeight / 2,
+      phase,
+    });
+  }
+
+  function hideIndicator() {
+    return gestureIndicator?.hide({ delayMs: 0 }) ?? false;
+  }
+
   const api = Object.freeze({
     version: VERSION,
     getConfig: () => ({ ...config }),
@@ -942,10 +1229,12 @@
       activeSessionId: activeSession?.id ?? null,
       lastCompletedSessionId: lastCompletedSession?.sessionId ?? null,
       automaticActionInFlight,
+      navigationOwner: nativeRootBack ? "BROWSER" : "BACKTRACK",
       semanticSettingsLoaded,
       semanticSettings: { ...semanticSettings },
       bufferedEntries: logBuffer.length,
       rootOverscrollMode: requestedRootOverscrollMode,
+      gestureIndicator: gestureIndicator?.getStatus?.() ?? null,
     }),
     getSnapshot: () => structuredClone(logBuffer),
     exportJson: () => JSON.stringify(logBuffer, null, 2),
@@ -956,6 +1245,8 @@
     disableAutomaticActions,
     clearCalibration,
     setRootOverscrollBehavior: applyRootOverscrollBehavior,
+    previewIndicator,
+    hideIndicator,
     start,
     stop,
   });
@@ -971,9 +1262,20 @@
     "pagehide",
     () => {
       finishSession("pagehide");
+      gestureIndicator?.destroy();
     },
     { capture: true },
   );
+
+  window.addEventListener("pageshow", () => void refreshGestureOwnership());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void refreshGestureOwnership();
+    }
+  });
+  globalThis.navigation?.addEventListener("currententrychange", () => {
+    void refreshGestureOwnership();
+  });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local" || !(GESTURE_SETTINGS_KEY in changes)) {

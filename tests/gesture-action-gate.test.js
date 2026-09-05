@@ -35,8 +35,13 @@ function gesture(id, observedAtMs) {
 test("one gesture can be claimed only once", async () => {
   const gate = new GestureActionGate(new MemoryStorageArea(), 1800);
 
-  const first = await gate.claim(20, gesture("gesture-a", 10_000), 10_100);
-  const duplicate = await gate.claim(20, gesture("gesture-a", 10_000), 10_200);
+  const first = await gate.claim(20, 2, gesture("gesture-a", 10_000), 10_100);
+  const duplicate = await gate.claim(
+    20,
+    2,
+    gesture("gesture-a", 10_000),
+    10_200,
+  );
 
   assert.equal(first.ok, true);
   assert.equal(duplicate.ok, false);
@@ -46,36 +51,70 @@ test("one gesture can be claimed only once", async () => {
 test("a split momentum tail is blocked by the tab cooldown", async () => {
   const gate = new GestureActionGate(new MemoryStorageArea(), 1800);
 
-  await gate.claim(20, gesture("gesture-a", 10_000), 10_100);
-  const tail = await gate.claim(20, gesture("gesture-tail", 10_400), 10_500);
+  await gate.claim(20, 2, gesture("gesture-a", 10_000), 10_100);
+  const tail = await gate.claim(
+    20,
+    2,
+    gesture("gesture-tail", 10_400),
+    10_500,
+  );
 
   assert.equal(tail.ok, false);
   assert.equal(tail.reason, GESTURE_GATE_REASONS.COOLDOWN_ACTIVE);
+  assert.equal(tail.scope, "TAB");
   assert.equal(tail.retryAfterMs, 1400);
 });
 
 test("a later physical gesture can be claimed", async () => {
   const gate = new GestureActionGate(new MemoryStorageArea(), 1800);
 
-  await gate.claim(20, gesture("gesture-a", 10_000), 10_100);
-  const later = await gate.claim(20, gesture("gesture-b", 12_000), 12_050);
+  await gate.claim(20, 2, gesture("gesture-a", 10_000), 10_100);
+  const later = await gate.claim(
+    20,
+    2,
+    gesture("gesture-b", 12_000),
+    12_050,
+  );
 
   assert.equal(later.ok, true);
 });
 
-test("cooldowns are independent per tab and removed with the tab", async () => {
+test("momentum is blocked across a tab switch in the same window", async () => {
   const storage = new MemoryStorageArea();
   const gate = new GestureActionGate(storage, 1800);
 
-  await gate.claim(20, gesture("gesture-a", 10_000), 10_100);
-  assert.equal(
-    (await gate.claim(21, gesture("gesture-b", 10_100), 10_200)).ok,
-    true,
+  await gate.claim(20, 2, gesture("gesture-a", 10_000), 10_100);
+  const openerTail = await gate.claim(
+    10,
+    2,
+    gesture("gesture-tail", 10_100),
+    10_200,
   );
 
-  await gate.remove(20);
+  assert.equal(openerTail.ok, false);
+  assert.equal(openerTail.reason, GESTURE_GATE_REASONS.COOLDOWN_ACTIVE);
+  assert.equal(openerTail.scope, "WINDOW");
+
+  await gate.removeWindow(2);
   assert.equal(
-    (await gate.claim(20, gesture("gesture-c", 10_300), 10_400)).ok,
+    (await gate.claim(10, 2, gesture("gesture-b", 10_300), 10_400)).ok,
+    true,
+  );
+});
+
+test("cooldowns are independent across windows and tab state is removable", async () => {
+  const storage = new MemoryStorageArea();
+  const gate = new GestureActionGate(storage, 1800);
+
+  await gate.claim(20, 2, gesture("gesture-a", 10_000), 10_100);
+  assert.equal(
+    (await gate.claim(21, 3, gesture("gesture-b", 10_100), 10_200)).ok,
+    true,
+  );
+  await gate.remove(20);
+  await gate.removeWindow(2);
+  assert.equal(
+    (await gate.claim(20, 2, gesture("gesture-c", 10_300), 10_400)).ok,
     true,
   );
 });
@@ -83,14 +122,15 @@ test("cooldowns are independent per tab and removed with the tab", async () => {
 test("stale, future, malformed, and tabless requests are rejected", async () => {
   const gate = new GestureActionGate(new MemoryStorageArea(), 1800);
 
-  for (const [tabId, request, now] of [
-    [null, gesture("a", 10_000), 10_100],
-    [20, gesture("", 10_000), 10_100],
-    [20, gesture("a", -1), 10_100],
-    [20, gesture("a", 20_000), 10_100],
-    [20, gesture("a", 1), 20_000],
+  for (const [tabId, windowId, request, now] of [
+    [null, 2, gesture("a", 10_000), 10_100],
+    [20, null, gesture("a", 10_000), 10_100],
+    [20, 2, gesture("", 10_000), 10_100],
+    [20, 2, gesture("a", -1), 10_100],
+    [20, 2, gesture("a", 20_000), 10_100],
+    [20, 2, gesture("a", 1), 20_000],
   ]) {
-    const result = await gate.claim(tabId, request, now);
+    const result = await gate.claim(tabId, windowId, request, now);
     assert.equal(result.ok, false);
     assert.equal(result.reason, GESTURE_GATE_REASONS.INVALID_REQUEST);
   }

@@ -10,6 +10,11 @@ export const NAVIGATION_AVAILABILITY = Object.freeze({
   UNKNOWN: "UNKNOWN",
 });
 
+export const OPENER_RELATIONSHIP_SOURCES = Object.freeze({
+  TAB_OPENER_ID: "TAB_OPENER_ID",
+  NAVIGATION_TARGET: "NAVIGATION_TARGET",
+});
+
 export const NAVIGATION_REASONS = Object.freeze({
   TRACKED_INTERNAL_ENTRY: "TRACKED_INTERNAL_ENTRY",
   TRACKED_ENTRY_POINT: "TRACKED_ENTRY_POINT",
@@ -61,17 +66,34 @@ function uncertain(state, reason, snapshot) {
   };
 }
 
-export function createCandidateState(tab) {
+function normalizeOpenerSource(value) {
+  return Object.values(OPENER_RELATIONSHIP_SOURCES).includes(value)
+    ? value
+    : null;
+}
+
+export function createCandidateState(tab, relationship = null) {
   const tabId = usableId(tab?.id);
-  const openerTabId = usableId(tab?.openerTabId);
+  const liveOpenerTabId = usableId(tab?.openerTabId);
+  const trackedOpenerTabId = usableId(relationship?.openerTabId);
+  const openerTabId = liveOpenerTabId ?? trackedOpenerTabId;
+  const openerSource =
+    liveOpenerTabId !== null
+      ? OPENER_RELATIONSHIP_SOURCES.TAB_OPENER_ID
+      : normalizeOpenerSource(relationship?.source);
   if (tabId === null || openerTabId === null) {
     return null;
   }
 
+  if (openerSource === null) {
+    return null;
+  }
+
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     tabId,
     openerTabId,
+    openerSource,
     openerValidated: false,
     status: NAVIGATION_TRACKING_STATUS.AWAITING_ENTRY,
     baselineEntryKey: null,
@@ -257,13 +279,36 @@ export class NavigationTracker {
     return next;
   }
 
-  beginCandidate(tab) {
-    const state = createCandidateState(tab);
+  beginCandidate(tab, relationship = null) {
+    const state = createCandidateState(tab, relationship);
     if (!state) {
       return Promise.resolve(null);
     }
 
-    return this.#enqueue(state.tabId, () => this.#write(state.tabId, state));
+    return this.#enqueue(state.tabId, async () => {
+      const existing = await this.#read(state.tabId);
+      if (!existing) {
+        return this.#write(state.tabId, state);
+      }
+
+      if (existing.openerTabId !== state.openerTabId) {
+        return null;
+      }
+
+      if (
+        existing.openerSource !== OPENER_RELATIONSHIP_SOURCES.TAB_OPENER_ID &&
+        state.openerSource === OPENER_RELATIONSHIP_SOURCES.TAB_OPENER_ID
+      ) {
+        return this.#write(state.tabId, {
+          ...existing,
+          schemaVersion: 2,
+          openerSource: OPENER_RELATIONSHIP_SOURCES.TAB_OPENER_ID,
+          revision: existing.revision + 1,
+        });
+      }
+
+      return existing;
+    });
   }
 
   confirmCandidate(tabId, openerTabId) {
@@ -311,6 +356,28 @@ export class NavigationTracker {
     return this.#enqueue(safeTabId, async () => {
       const state = await this.#read(safeTabId);
       return assessTrackedNavigation(state, liveSnapshot);
+    });
+  }
+
+  getValidatedOpener(tabId) {
+    const safeTabId = usableId(tabId);
+    if (safeTabId === null) {
+      return Promise.resolve(null);
+    }
+
+    return this.#enqueue(safeTabId, async () => {
+      const state = await this.#read(safeTabId);
+      const openerTabId = usableId(state?.openerTabId);
+      if (state?.openerValidated !== true || openerTabId === null) {
+        return null;
+      }
+
+      return {
+        openerTabId,
+        source:
+          normalizeOpenerSource(state.openerSource) ??
+          OPENER_RELATIONSHIP_SOURCES.TAB_OPENER_ID,
+      };
     });
   }
 

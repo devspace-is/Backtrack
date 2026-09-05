@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Backtrack Development",
-  "version": "0.5.0",
+  "version": "0.6.2",
   "description": "Conservative Atlas-like back navigation across tabs for Brave and Chrome.",
   "permissions": [
-    "storage"
+    "storage",
+    "webNavigation"
   ],
   "background": {
     "service_worker": "src/background/service-worker.js",
@@ -18,8 +19,11 @@
       ],
       "js": [
         "src/shared/gesture-classifier.js",
+        "src/shared/gesture-commit-policy.js",
+        "src/shared/gesture-visual-policy.js",
         "src/shared/navigation-snapshot.js",
         "src/content/navigation-state.js",
+        "src/content/gesture-indicator.js",
         "src/content/gesture-debug.js"
       ],
       "run_at": "document_start",

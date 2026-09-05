@@ -1,7 +1,8 @@
 # Conservative Gesture Safety
 
-Status: August 30, 2026  
-Implementation: development version `0.5.0`
+Status: September 5, 2026
+
+Implementation: development version `0.6.2`
 
 ## Purpose
 
@@ -17,22 +18,53 @@ A missed tab return is acceptable. An accidental tab closure is not.
 
 ## Decision sequence
 
-Backtrack does not act when a distance threshold is crossed. It waits until no
-new related event arrives for 220 ms, then evaluates the whole sequence:
+Backtrack does not act at the preliminary distance threshold. It uses two
+conservative paths:
+
+1. A stronger early candidate must remain fully eligible for 90 ms. This avoids
+   waiting for a multi-second macOS momentum tail.
+2. If the early path is inconclusive, no related event may arrive for 220 ms
+   before the completed-sequence fallback is evaluated.
 
 ```text
 wheel events
-  → completed sequence
   → physical-shape checks
   → page and scroll-ownership checks
   → calibrated back-direction check
+  → stronger early threshold + 90 ms confirmation
+       or completed-sequence fallback
   → root-containment check
-  → tab-level momentum gate
+  → tab-and-window momentum gate
   → live internal-history and opener decision
 ```
 
 The existing navigation and tab-action layers still make the final decision.
 The gesture classifier cannot directly close a tab.
+
+## Visual-only feedback
+
+Version `0.6.0` adds a separate preview threshold so the user receives visible
+feedback before the stricter action decision. This does not lower any action
+threshold and does not add a delay:
+
+| Signal | Visual-preview minimum |
+| --- | ---: |
+| Net horizontal distance | 80 CSS pixels |
+| Horizontal-to-vertical accumulated movement | 3:1 |
+| Movement retained in one horizontal direction | 85% |
+| Pixel-mode events | 4 |
+| Largest individual horizontal delta | 6 CSS pixels |
+
+The preview also requires a calibrated back direction and enabled automatic
+behavior. Every non-threshold blocker still applies, including page
+cancellation, non-pixel or synthetic input, modifiers, forward movement, and
+horizontal scroll ownership. A preview can fade away without an action; it is
+feedback about an emerging candidate, not a promise that a tab will close.
+
+The indicator is confined to the top frame, has no pointer interaction, and
+lives in a closed Shadow DOM. It uses no screenshot, page text, URL, external
+asset, storage, or additional permission. `prefers-reduced-motion: reduce`
+removes the animated travel and keeps only effectively immediate state changes.
 
 ## Minimum physical evidence
 
@@ -57,6 +89,27 @@ in the controlled Brave/macOS matrix, which reached roughly 2,300–5,500 pixels
 while remaining strongly horizontal. They are also far above the incidental
 horizontal drift in the fastest measured vertical scroll, which accumulated
 only 22 horizontal pixels.
+
+## Stronger early-commit evidence
+
+The fast path deliberately requires more evidence than the final diagnostic
+classification:
+
+| Signal | Early minimum |
+| --- | ---: |
+| Net horizontal distance | 720 CSS pixels |
+| Horizontal-to-vertical accumulated movement | 5:1 |
+| Movement retained in one horizontal direction | 95% |
+| Pixel-mode events | 12 |
+| Largest individual horizontal delta | 12 CSS pixels |
+| Stable confirmation time | 90 ms |
+
+Every ordinary blocker still applies. A consumable or edge-positioned inner
+horizontal scroller, an unknown scroll direction, a modifier, non-pixel input,
+synthetic input, page cancellation, a forward direction, missing calibration,
+or disabled automatic behavior prevents early commitment. The 90 ms timer is
+not restarted by every momentum event; at its end, the complete safety
+evaluation is run again against all events observed so far.
 
 ## Horizontal scroll ownership
 
@@ -119,32 +172,59 @@ extended real-site matrix before a production MVP decision.
 
 ## Momentum deduplication
 
-Standard `WheelEvent` exposes no dependable momentum phase. Backtrack uses two
-independent boundaries instead:
+Standard `WheelEvent` exposes no dependable momentum phase. Backtrack therefore
+marks a content sequence as already requested before any early action and the
+service worker atomically claims the gesture ID in `chrome.storage.session`.
+The 1.8-second cooldown is stored both for the sending tab and its browser
+window.
 
-1. A content sequence can request an action only after it ends, never at its
-   preliminary threshold crossing.
-2. The service worker atomically claims the gesture ID per tab in
-   `chrome.storage.session` and enforces a 1.8-second per-tab cooldown.
-
-The second guard survives a document navigation and service-worker suspension.
-If one physical movement is split into two apparent sequences, the later tail
-is rejected. The tradeoff is that an unusually fast intentional second back
-gesture may be ignored.
+The window guard matters because an early action can navigate the document or
+activate an opener while the old physical movement is still producing events.
+If that remainder reaches the newly active document, it is rejected instead of
+causing a second history step or closing another level of the tab tree. The
+guard survives document navigation and service-worker suspension. The tradeoff
+is that an unusually fast intentional second back gesture may be ignored.
 
 ## Internal history and opener behavior
+
+### Root-tab native navigation in version 0.6.2
+
+Before taking over input, the content layer requests the existing opener and
+history decision. Only an explicit `NO_OPENER` result enables native root-tab
+handling. This decision includes Chromium's exact navigation-target fallback;
+an unavailable history API, lost child baseline, closed opener, or API error
+alone is not enough to select this mode.
+
+A verified root restores the page's original inline overscroll value and
+priority, leaves its wheel input untouched, and displays no Backtrack arrow.
+Brave handles ordinary history and gesture boundaries directly, so its next
+Back does not depend on the extension's 1.8-second gate. Site-supplied
+overscroll restrictions are preserved, not overridden.
+
+Ownership is refreshed on page show, history-entry changes, and return to a
+visible tab. Responses from superseded requests are ignored. Containment is
+never released while a Backtrack sequence or automatic action is active.
+Transient refresh failures preserve the previous owner. All child-tab action
+checks and the nested-tab momentum gate remain unchanged.
+
+### Extension-controlled child tabs
 
 After a gesture survives all checks, the background still re-evaluates the
 current tab:
 
 - `USE_INTERNAL_HISTORY`: the content script calls `history.back()` once;
+- `USE_BROWSER_HISTORY`: no safe child-closure decision exists, but the sender
+  was freshly revalidated; the content script calls `history.back()` once;
 - `RETURN_TO_OPENER_ELIGIBLE`: the guarded action activates the exact opener,
   revalidates it, then closes the child;
-- `NO_SPECIAL_ACTION`: nothing happens.
+- an action of `NO_SPECIAL_ACTION`: nothing happens.
 
-Missing baselines, closed openers, moved children, pinned children, protected
-pages, stale senders, unsupported message sources, and API failures all remain
-no-ops.
+Missing baselines, closed openers, already-moved children, and pinned children
+never authorize closure. Since `0.6.1`, they can still use ordinary browser
+Back; otherwise root containment would suppress navigation without replacing
+it. Protected pages, inactive/changed senders, unsupported sources or frames,
+in-progress navigation, rejected gesture claims, and API failures remain
+no-ops. The window-wide momentum guard is unchanged.
 
 ## Automated coverage
 
@@ -155,8 +235,10 @@ The tests cover:
 - distance, dominance, consistency, event-count, and peak thresholds;
 - line/page delta mode, synthetic events, modifiers, and page cancellation;
 - consumable, boundary, incomplete, and unknown horizontal scroll state;
+- stronger early-commit thresholds and ordinary safety blockers on the fast
+  path;
 - duplicate gesture IDs and split momentum tails;
-- per-tab cooldown isolation and cleanup;
+- same-window tail blocking, cross-window isolation, and cleanup;
 - gate enforcement before any tab action;
 - internal-history precedence and guarded nested opener actions.
 

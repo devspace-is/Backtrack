@@ -9,17 +9,26 @@ This first Phase 2 component answers one question only:
 > Does the current tab have an opener tab that still exists and can be reached
 > unambiguously?
 
-When a tab is opened from another tab, Chromium exposes the opener tab ID as
-`openerTabId`. Backtrack reads this relationship in a Manifest V3 background
-process (service worker) and validates it conservatively. Since version
-`0.4.0`, a separate action module uses this validation immediately before
+When a tab is opened from another tab, Chromium often exposes the opener tab
+ID as `openerTabId`. A real Brave test also produced a link-created tab where
+that optional property was missing. Version `0.5.1` therefore uses
+`webNavigation.onCreatedNavigationTarget` as a narrow fallback. That browser
+event supplies both the exact source-tab ID and the exact new child-tab ID.
+
+Backtrack never infers an opener from the currently active tab, tab order, a
+time window, or a URL match. The fallback is accepted only for the dedicated
+browser event and is kept in volatile session storage. Since version `0.4.0`,
+a separate action module uses the validated relationship immediately before
 activating an opener and closing its child.
 
 ## Safety decision
 
 Backtrack accepts the relationship only when all of the following are true:
 
-- the current tab and `openerTabId` have valid numeric IDs;
+- the current tab and its browser-provided source ID have valid numeric IDs;
+- the source is either the live `openerTabId` or an exact
+  `onCreatedNavigationTarget` relationship;
+- live and session-tracked relationships do not conflict;
 - a tab does not refer to itself as its opener;
 - the current tab is not pinned;
 - the opener can be resolved immediately through `chrome.tabs.get()`;
@@ -36,6 +45,8 @@ action layer then stops without closing the current tab.
 | Situation | Decision | Reason |
 | --- | --- | --- |
 | Opener was closed | Reject | The stored ID can no longer be resolved. |
+| Link-created child has no `openerTabId`, but Chromium reports an exact navigation target | Accept | The browser supplied both source and child IDs; all normal live checks still apply. |
+| Tab has neither `openerTabId` nor an exact navigation-target event | Reject | Backtrack does not guess from focus, timing, tab order, or addresses. |
 | Only the child tab was moved to another window | Reject | The opener is no longer in the same visible navigation context. |
 | Both tabs were moved together to the same other window | Accept | The current unambiguous relationship in one window still exists. |
 | Current tab is pinned | Reject | Automatically closing a pinned tab would be surprising. |
@@ -50,8 +61,8 @@ A chain such as `Tab A → Tab B → Tab C` does not require a stored tab tree.
 Backtrack always validates only the immediate relationship:
 
 ```text
-Tab C → openerTabId of Tab C → Tab B
-Tab B → openerTabId of Tab B → Tab A
+Tab C → validated immediate source of Tab C → Tab B
+Tab B → validated immediate source of Tab B → Tab A
 ```
 
 Nested opener relationships therefore remain possible without building a
@@ -63,7 +74,8 @@ The validation processes only short-lived tab metadata in the background:
 
 - tab ID;
 - window ID;
-- opener tab ID;
+- opener/source tab ID and whether it came from `openerTabId` or the exact
+  navigation-target event;
 - active, pinned, discarded, private, and group state.
 
 Diagnostic objects contain no URL, page title, favicon, or page content. Since
@@ -82,6 +94,12 @@ page title, and favicon; Backtrack does not access those fields.
 The `storage` permission added in version `0.3.0` belongs to the separate
 history component. [`internal-history.md`](internal-history.md) documents why
 that component uses only `storage.session`.
+
+Version `0.5.1` adds the `webNavigation` permission solely for
+`onCreatedNavigationTarget`. The event can theoretically expose the URL being
+opened, but Backtrack neither logs nor stores that field. It retains only the
+numeric source and child tab IDs in `storage.session`. This avoids a much less
+reliable and more dangerous guess based on the active tab or tab position.
 
 The background process is registered as a module service worker in the
 manifest. Its event listeners are registered immediately at load time, as
@@ -105,6 +123,8 @@ Tests cover, among other cases:
 
 - a valid opener and safe diagnostic fields;
 - a missing or closed opener;
+- a validated navigation-target fallback with no live `openerTabId`;
+- untrusted fallback sources and conflicting relationships;
 - nested relationships;
 - window changes;
 - pinned and grouped tabs;

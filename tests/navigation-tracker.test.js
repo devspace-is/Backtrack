@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   NAVIGATION_AVAILABILITY,
   NAVIGATION_REASONS,
+  OPENER_RELATIONSHIP_SOURCES,
   NavigationTracker,
   applyNavigationSnapshot,
   assessTrackedNavigation,
@@ -55,6 +56,43 @@ test("a new child starts at its tracked entry point", async () => {
 
   assert.equal(result.availability, NAVIGATION_AVAILABILITY.AT_ENTRY_POINT);
   assert.equal(result.reason, NAVIGATION_REASONS.TRACKED_ENTRY_POINT);
+});
+
+test("a validated navigation target supplies a session-only opener fallback", async () => {
+  const tracker = new NavigationTracker(new MemoryStorageArea());
+  await tracker.beginCandidate(
+    tab({ openerTabId: undefined }),
+    {
+      openerTabId: 10,
+      source: OPENER_RELATIONSHIP_SOURCES.NAVIGATION_TARGET,
+    },
+  );
+  await tracker.confirmCandidate(20, 10);
+
+  assert.deepEqual(await tracker.getValidatedOpener(20), {
+    openerTabId: 10,
+    source: OPENER_RELATIONSHIP_SOURCES.NAVIGATION_TARGET,
+  });
+});
+
+test("a conflicting second candidate never replaces the first relationship", async () => {
+  const tracker = new NavigationTracker(new MemoryStorageArea());
+  await tracker.beginCandidate(tab());
+
+  const conflicting = await tracker.beginCandidate(
+    tab({ openerTabId: undefined }),
+    {
+      openerTabId: 11,
+      source: OPENER_RELATIONSHIP_SOURCES.NAVIGATION_TARGET,
+    },
+  );
+
+  assert.equal(conflicting, null);
+  await tracker.confirmCandidate(20, 10);
+  assert.deepEqual(await tracker.getValidatedOpener(20), {
+    openerTabId: 10,
+    source: OPENER_RELATIONSHIP_SOURCES.TAB_OPENER_ID,
+  });
 });
 
 test("push navigation creates meaningful internal back history", async () => {

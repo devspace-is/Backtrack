@@ -7,6 +7,7 @@ import {
   performConfirmedBackAction,
 } from "../src/background/tab-action.js";
 import { NAVIGATION_AVAILABILITY } from "../src/background/navigation-tracker.js";
+import { OPENER_RELATIONSHIP_SOURCES } from "../src/background/navigation-tracker.js";
 
 function tab(overrides = {}) {
   return {
@@ -120,6 +121,27 @@ test("the opener is activated before the child is closed", async () => {
   assert.ok(closeIndex > activationIndex);
 });
 
+test("a validated navigation target can return a child without openerTabId", async () => {
+  const child = tab({ openerTabId: undefined });
+  const tabsApi = new FakeTabsApi([opener, child]);
+  const tracker = trackerWith(NAVIGATION_AVAILABILITY.AT_ENTRY_POINT);
+  tracker.getValidatedOpener = async () => ({
+    openerTabId: 10,
+    source: OPENER_RELATIONSHIP_SOURCES.NAVIGATION_TARGET,
+  });
+
+  const result = await performConfirmedBackAction(
+    child,
+    { currentEntryKey: "entry-a" },
+    tabsApi,
+    tracker,
+  );
+
+  assert.equal(result.action, TAB_ACTIONS.RETURNED_TO_OPENER);
+  assert.equal(tabsApi.tabs.has(20), false);
+  assert.equal(tabsApi.tabs.get(10).active, true);
+});
+
 test("internal history prevents all tab actions", async () => {
   const tabsApi = new FakeTabsApi([opener, tab()]);
   const result = await performConfirmedBackAction(
@@ -147,7 +169,7 @@ test("manual and restricted tabs never close", async (t) => {
       trackerWith(NAVIGATION_AVAILABILITY.AT_ENTRY_POINT),
     );
 
-    assert.equal(result.action, TAB_ACTIONS.NO_SPECIAL_ACTION);
+    assert.equal(result.action, TAB_ACTIONS.USE_BROWSER_HISTORY);
     assert.equal(tabsApi.tabs.has(20), true);
     assert.equal(tabsApi.events.some(([event]) => event === "remove"), false);
   });
@@ -180,7 +202,7 @@ test("an inactive child is not acted on after the decision", async () => {
   assert.equal(tabsApi.events.some(([event]) => event === "remove"), false);
 });
 
-test("a missing opener is a safe no-op", async () => {
+test("a missing opener allows ordinary back but never closes the child", async () => {
   const tabsApi = new FakeTabsApi([tab()]);
   const result = await performConfirmedBackAction(
     tab(),
@@ -189,9 +211,55 @@ test("a missing opener is a safe no-op", async () => {
     trackerWith(NAVIGATION_AVAILABILITY.AT_ENTRY_POINT),
   );
 
-  assert.equal(result.action, TAB_ACTIONS.NO_SPECIAL_ACTION);
+  assert.equal(result.action, TAB_ACTIONS.USE_BROWSER_HISTORY);
   assert.equal(tabsApi.tabs.has(20), true);
   assert.equal(tabsApi.events.some(([event]) => event === "remove"), false);
+});
+
+test("ordinary back revalidates the active sender before authorizing history", async (t) => {
+  for (const [name, patch, expectedReason] of [
+    ["inactive", { active: false }, TAB_ACTION_REASONS.CURRENT_TAB_NOT_ACTIVE],
+    ["moved during request", { windowId: 4 }, TAB_ACTION_REASONS.CURRENT_TAB_CHANGED],
+    ["discarded", { discarded: true }, TAB_ACTION_REASONS.CURRENT_TAB_CHANGED],
+    ["private context changed", { incognito: true }, TAB_ACTION_REASONS.CURRENT_TAB_CHANGED],
+  ]) {
+    await t.test(name, async () => {
+      const sender = tab({ openerTabId: undefined });
+      const tabsApi = new FakeTabsApi([{ ...sender, ...patch }]);
+      const result = await performConfirmedBackAction(
+        sender, {}, tabsApi, trackerWith(NAVIGATION_AVAILABILITY.UNKNOWN),
+      );
+      assert.equal(result.action, TAB_ACTIONS.NO_SPECIAL_ACTION);
+      assert.equal(result.reason, expectedReason);
+      assert.equal(tabsApi.events.some(([event]) => event !== "get"), false);
+    });
+  }
+});
+
+test("pinning or moving a child blocks closure but permits its ordinary back", async (t) => {
+  for (const patch of [{ pinned: true }, { windowId: 4 }]) {
+    await t.test(JSON.stringify(patch), async () => {
+      const child = tab(patch);
+      const tabsApi = new FakeTabsApi([opener, child]);
+      const result = await performConfirmedBackAction(
+        child, {}, tabsApi, trackerWith(NAVIGATION_AVAILABILITY.UNKNOWN),
+      );
+      assert.equal(result.action, TAB_ACTIONS.USE_BROWSER_HISTORY);
+      assert.equal(tabsApi.events.some(([event]) => event !== "get"), false);
+    });
+  }
+});
+
+test("ordinary back does not start another navigation during a transition", async () => {
+  const current = tab({ openerTabId: undefined });
+  const tabsApi = new FakeTabsApi([current]);
+  const result = await performConfirmedBackAction(
+    current, { transitionActive: true }, tabsApi,
+    trackerWith(NAVIGATION_AVAILABILITY.UNKNOWN),
+  );
+  assert.equal(result.action, TAB_ACTIONS.NO_SPECIAL_ACTION);
+  assert.equal(result.reason, TAB_ACTION_REASONS.NAVIGATION_IN_PROGRESS);
+  assert.deepEqual(tabsApi.events, []);
 });
 
 test("activation failure leaves the child open and active", async () => {

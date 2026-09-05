@@ -37,6 +37,12 @@ export function createNavigationMessageListener(
 
     if (message?.type === MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION) {
       const runAction = async () => {
+        if (sender?.frameId !== undefined && sender.frameId !== 0) {
+          return {
+            action: "NO_SPECIAL_ACTION",
+            reason: "NOT_TOP_FRAME",
+          };
+        }
         if (message?.gesture?.source === "AUTOMATIC") {
           if (!gestureActionGate) {
             return {
@@ -46,6 +52,7 @@ export function createNavigationMessageListener(
           }
           const claim = await gestureActionGate.claim(
             sender?.tab?.id,
+            sender?.tab?.windowId,
             message.gesture,
           );
           if (!claim.ok) {

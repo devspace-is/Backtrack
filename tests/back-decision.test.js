@@ -6,6 +6,7 @@ import {
   evaluateBackDecision,
 } from "../src/background/back-decision.js";
 import { NAVIGATION_AVAILABILITY } from "../src/background/navigation-tracker.js";
+import { OPENER_RELATIONSHIP_SOURCES } from "../src/background/navigation-tracker.js";
 
 function currentTab(overrides = {}) {
   return {
@@ -69,6 +70,27 @@ test("the entry point becomes eligible but performs no tab action", async () => 
 
   assert.equal(result.decision, BACK_DECISIONS.RETURN_TO_OPENER_ELIGIBLE);
   assert.match(result.notice, /no history or tab action/i);
+});
+
+test("a validated navigation target remains eligible without openerTabId", async () => {
+  const tracker = trackerWith(NAVIGATION_AVAILABILITY.AT_ENTRY_POINT);
+  tracker.getValidatedOpener = async () => ({
+    openerTabId: 10,
+    source: OPENER_RELATIONSHIP_SOURCES.NAVIGATION_TARGET,
+  });
+
+  const result = await evaluateBackDecision(
+    currentTab({ openerTabId: undefined }),
+    { currentEntryKey: "entry-a" },
+    tabsApi(opener),
+    tracker,
+  );
+
+  assert.equal(result.decision, BACK_DECISIONS.RETURN_TO_OPENER_ELIGIBLE);
+  assert.equal(
+    result.opener.relationshipSource,
+    OPENER_RELATIONSHIP_SOURCES.NAVIGATION_TARGET,
+  );
 });
 
 test("uncertain navigation state is a safe no-op", async () => {

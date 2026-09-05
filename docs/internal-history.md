@@ -1,6 +1,6 @@
 # Internal Back History
 
-Status: August 30, 2026
+Status: September 5, 2026
 
 ## Purpose of this step
 
@@ -15,11 +15,16 @@ Backtrack returns one of three conservative decisions:
 | --- | --- |
 | `USE_INTERNAL_HISTORY` | The tab is beyond its entry point. The tab-action layer must leave the tabs untouched so internal back navigation wins. |
 | `RETURN_TO_OPENER_ELIGIBLE` | The tab is back at the captured entry point and its opener is still safe. The guarded tab-action layer may revalidate and return to the opener. |
-| `NO_SPECIAL_ACTION` | The state is unclear or unsafe. Backtrack must not take control. |
+| `NO_SPECIAL_ACTION` | The state is unclear or unsafe for child closure. Backtrack must not activate an opener or close the tab. |
 
 The decision function itself performs none of those actions. Since version
 `0.4.0`, the separate guarded tab-action layer may consume
-`RETURN_TO_OPENER_ELIGIBLE`; it never acts on the other two decisions.
+`RETURN_TO_OPENER_ELIGIBLE` to return to the opener. Since `0.6.1`, confirmed
+automatic gestures also preserve ordinary browser Back when there is no safe
+opener or tracked entry. The action layer revalidates the active sender and
+returns `USE_BROWSER_HISTORY`; the page calls `history.back()` once. This
+requires no invented entry point and cannot authorize tab closure. In-progress
+navigation and failed safety/action checks still stop the request.
 
 ## Why `history.length` is insufficient
 
@@ -113,9 +118,11 @@ but Backtrack calls only `storage.session`. Without it, the entry point would
 become unknown after a routine background-process restart. Inventing a new
 baseline would be more dangerous than keeping this small volatile state.
 
-The broader `webNavigation` permission is not used. It is unnecessary for this
-model and could expose additional navigation events and addresses to an
-extension.
+Version `0.5.1` uses the `webNavigation` permission only for
+`onCreatedNavigationTarget`, which supplies an exact source-to-child tab
+relationship when `openerTabId` is missing. Internal-history depth still comes
+only from the page-side Navigation API. Backtrack ignores the navigation event's
+URL and stores only numeric tab IDs plus opaque entry keys in session memory.
 
 ## Safe behavior when evidence is missing
 

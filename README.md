@@ -25,19 +25,50 @@ planning are maintained in English.
 
 The Phase 1 gesture proof of concept remains available. A Manifest V3 service
 worker now validates whether a newly opened tab has a still-existing,
-unambiguous opener (`openerTabId`) in the same browser window. Backtrack also
+unambiguous opener in the same browser window. It prefers Chromium's
+`openerTabId` and, since version `0.5.1`, supplements a missing value only when
+the browser's `webNavigation.onCreatedNavigationTarget` event provides the
+exact source-tab and child-tab IDs. Backtrack also
 distinguishes meaningful internal history from the captured child-tab entry
 point across full-document navigation and single-page applications that use
 `history.pushState()` or `history.replaceState()`. A guarded action layer can
 now activate a freshly revalidated opener and close its child tab at the
 tracked entry point.
 
-Version `0.5.0` adds the first conservative physical-gesture orchestration.
+Version `0.5.0` added the first conservative physical-gesture orchestration.
 Automatic actions are disabled by default and remain disabled until the local
-back direction is explicitly calibrated. Once enabled, Backtrack waits for a
-complete wheel sequence, rejects ambiguous or page-owned horizontal movement,
-deduplicates momentum at tab level, and only then requests the guarded history
-or opener action.
+back direction is explicitly calibrated. Version `0.5.2` no longer waits for
+the full macOS momentum tail: a stronger early policy must remain eligible for
+90 ms before it requests the guarded history or opener action. Ambiguous,
+vertical, or page-owned horizontal movement still fails closed. A window-wide
+cooldown prevents the remainder of the same physical movement from acting in
+the newly active document or opener tab.
+
+Version `0.6.0` adds local visual feedback without changing that action gate.
+Once a calibrated back movement is already clear, a small arrow appears in the
+middle of the page and its ring follows gesture progress. It becomes blue when
+the stronger early-action threshold is armed, then moves toward the back
+direction and fades on commit.
+Rejected or incomplete movement simply fades the arrow away. The indicator is
+an isolated, non-interactive overlay: it neither reads page content nor delays
+the guarded navigation request, and reduced-motion preferences are respected.
+
+Version `0.6.1` restores ordinary back navigation in tabs without a safe opener
+or a tracked child entry. Previously, root overscroll containment suppressed
+native Back there, but the action layer supplied no replacement. A confirmed
+gesture now requests normal browser history traversal in the freshly checked
+active tab unless the tab qualifies for the separately guarded opener action.
+Missing closure evidence never authorizes a close. Momentum, in-progress
+navigation, inactive senders, and action failures still block further action.
+
+Version `0.6.2` leaves normal navigation in verified root tabs to Brave itself.
+When neither `openerTabId` nor the browser's exact navigation-target fallback
+provides an opener, Backtrack restores the page's original overscroll style
+and does not classify or animate its wheel input. These tabs no longer pass
+through Backtrack's 1.8-second action gate. Child tabs retain the existing
+gesture, history, and closure guards. Ownership changes wait until any active
+Backtrack sequence and action have ended. This is a bounded root-tab fix, not
+a claim that rapid consecutive gestures in nested child tabs are solved.
 
 Real trackpad measurements produced a **Conditional Go** for a bounded Phase 2
 prototype:
@@ -64,6 +95,7 @@ src/
 │   ├── back-decision.js
 │   ├── gesture-action-gate.js
 │   ├── navigation-message-handler.js
+│   ├── navigation-target-handler.js
 │   ├── navigation-tracker.js
 │   ├── opener-message-handler.js
 │   ├── opener-resolver.js
@@ -71,13 +103,17 @@ src/
 │   └── tab-action.js
 ├── content/
 │   ├── gesture-debug.js
+│   ├── gesture-indicator.js
 │   └── navigation-state.js
 └── shared/
+    ├── gesture-commit-policy.js
     ├── gesture-classifier.js
+    ├── gesture-visual-policy.js
     ├── messages.js
     └── navigation-snapshot.js
 docs/
 ├── gesture-fixture.html
+├── indicator-fixture.html
 ├── gesture-research.md
 ├── gesture-safety.md
 ├── internal-history.md
@@ -86,11 +122,16 @@ docs/
 └── tab-action.md
 tests/
 ├── back-decision.test.js
+├── back-navigation-regression.test.js
 ├── gesture-action-gate.test.js
 ├── gesture-classifier.test.js
+├── gesture-commit-policy.test.js
+├── gesture-visual-policy.test.js
 ├── navigation-message-handler.test.js
+├── navigation-target-handler.test.js
 ├── navigation-snapshot.test.js
 ├── navigation-tracker.test.js
+├── native-root-back.test.js
 ├── opener-message-handler.test.js
 ├── opener-resolver.test.js
 └── tab-action.test.js
@@ -124,23 +165,47 @@ browsers, but Brave on macOS is the primary target.
 `src/content/gesture-debug.js` observes horizontal `wheel` sequences at
 `document_start`. It records normalized deltas, axis dominance, cancelability,
 scroll context, preliminary thresholds, and sequence boundaries. The pure
-classifier waits for a completed sequence and rejects vertical movement,
-short or inconsistent input, synthetic events, modifiers, non-pixel wheel
-input, page-canceled events, and horizontal scroll areas that may own the
-interaction.
+classifier rejects vertical movement, short or inconsistent input, synthetic
+events, modifiers, non-pixel wheel input, page-canceled events, and horizontal
+scroll areas that may own the interaction.
 
 If and only if the direction was calibrated and automatic actions were
-enabled, the content layer applies root overscroll containment, confirms that
-the CSS took effect, and sends one semantic `BACK_GESTURE` request. A
-session-only background gate enforces one action per gesture ID and a
-1.8-second per-tab cooldown against split momentum tails. See
+enabled and the tab is not a verified root, the content layer applies root
+overscroll containment, confirms that the CSS took effect, and sends one
+semantic `BACK_GESTURE` request. It can send
+that request before the diagnostic sequence ends only after the stronger
+early-commit thresholds remain valid for 90 ms. A session-only background gate
+enforces one action per gesture ID and a 1.8-second cooldown across the whole
+window against split or retargeted momentum tails. See
 [gesture-safety.md](docs/gesture-safety.md).
+
+In a verified root tab, Brave owns ordinary Back, Forward, and momentum
+handling, including its own native feedback. Backtrack shows its custom arrow
+only on the extension-controlled path. `BacktrackGestureDebug.getStatus()`
+reports `navigationOwner: "BROWSER"` or `"BACKTRACK"` for local diagnosis.
+
+### Gesture feedback
+
+`src/shared/gesture-visual-policy.js` permits feedback earlier than an action,
+but reuses all direction, page-ownership, scroll-area, modifier, trust, and
+calibration blockers. The indicator begins at 80 horizontal pixels and never
+performs navigation itself. `src/content/gesture-indicator.js` renders only a
+fixed, pointer-transparent overlay inside a closed Shadow DOM, so site styles
+cannot normally alter it and it cannot intercept clicks or scrolling.
+
+The ring shows progress toward the stricter 720-pixel early-commit distance.
+The action thresholds and 90 ms confirmation remain unchanged. If the gesture
+does not reach an action, the arrow fades out without changing the page. The
+visual itself stays centered in the viewport so it is not missed at the edge.
 
 ### Safe opener validation
 
-The background process validates `openerTabId` without requesting the broad
-`tabs` permission. It rejects missing, closed, moved, discarded, pinned-child,
-or cross-context relationships. The same relationship is validated again
+The background process prefers `openerTabId` without requesting the broad
+`tabs` permission. Some link-created tabs do not expose that property. For
+those tabs only, Backtrack accepts Chromium's dedicated
+`onCreatedNavigationTarget` event as a session-only source-to-child mapping.
+It rejects missing, conflicting, closed, moved, discarded, pinned-child, or
+cross-context relationships. The same exact relationship is validated again
 immediately before activation and immediately before child-tab closure.
 
 See [opener-safety.md](docs/opener-safety.md).
@@ -165,6 +230,12 @@ missing or contradictory evidence
 `history.length` is logged for diagnostics only and is never used as the sole
 decision signal. See [internal-history.md](docs/internal-history.md).
 
+These are child-closure decisions, not permission to disable ordinary Back.
+When closure is ineligible, the action layer can return `USE_BROWSER_HISTORY`:
+the content script requests `history.back()` without assuming that the
+Navigation API exposes every earlier entry. At the start of browser history,
+that request does nothing and the tab stays open.
+
 ### Guarded tab action
 
 `src/background/tab-action.js` consumes only a confirmed semantic back request.
@@ -173,8 +244,9 @@ point and a live, same-window opener. It activates the opener first, validates
 the relationship once more, and only then closes the child. If closing fails,
 it attempts to restore focus to the still-open child.
 
-The gesture layer can call this action only after its complete conservative
-classification succeeds. See [tab-action.md](docs/tab-action.md).
+The gesture layer can call this action only after either the stronger confirmed
+early classification or the completed-sequence fallback succeeds. See
+[tab-action.md](docs/tab-action.md).
 
 ## Debugging
 
@@ -251,8 +323,13 @@ This command can close the current child tab. It returns one of:
 - `RETURNED_TO_OPENER`: the opener was activated and the child was closed;
 - `USE_INTERNAL_HISTORY`: the child still has internal back history, so no tab
   action occurred;
-- `NO_SPECIAL_ACTION`: the relationship or navigation state was unsafe or an
-  API step failed.
+- `USE_BROWSER_HISTORY`: no safe child-close decision; ordinary browser Back
+  is available to automatic gesture orchestration;
+- `NO_SPECIAL_ACTION`: the sender is no longer eligible, navigation is in
+  progress, or an API step failed.
+
+The manual development command only reports either history result; unlike an
+automatic gesture request, it does not call `history.back()`.
 
 This development command bypasses gesture classification but not the opener or
 history safety checks. The provisional `threshold-crossed` signal never calls
@@ -269,7 +346,15 @@ Each structured object has a `kind` field:
 
 - `wheel`: one raw and normalized `wheel` event;
 - `session-start`: start of one related event sequence;
-- `threshold-crossed`: a preliminary measurement signal, never an action;
+- `threshold-crossed`: the preliminary base threshold, never an action by
+  itself;
+- `early-commit-armed`: the stronger fast-path threshold became eligible;
+- `early-commit-disarmed`: a safety condition changed during confirmation;
+- `gesture-committed`: the stronger evidence remained eligible for 90 ms and
+  an action request is about to be considered;
+- `gesture-indicator-shown`: the safe visual-only preview threshold was met;
+- `gesture-indicator-phase`: the stronger action threshold became armed;
+- `gesture-indicator-hidden`: later evidence invalidated the visual preview;
 - `session-end`: summary and conservative classification;
 - `post-dispatch-default-prevented`: the page probably canceled the event
   after Backtrack's capture listener.
@@ -294,6 +379,17 @@ Show status:
 ```js
 BacktrackGestureDebug.getStatus()
 ```
+
+Preview the visual states without performing navigation:
+
+```js
+BacktrackGestureDebug.previewIndicator(0.55, "tracking")
+BacktrackGestureDebug.previewIndicator(1, "armed")
+BacktrackGestureDebug.hideIndicator()
+```
+
+These development commands only display or hide the overlay. They neither
+simulate a trusted trackpad event nor request any history or tab action.
 
 Enable automatic actions only after observing which sign the normal physical
 back swipe produces on this Mac:
@@ -435,13 +531,14 @@ middle position so both directions can be tested.
   no reliable momentum phase.
 
 The complete evidence matrix is in
-[gesture-research.md](docs/gesture-research.md). The version `0.5.0` automated
-suite and calibrated physical end-to-end results are recorded separately in
+[gesture-research.md](docs/gesture-research.md). Automated suites through
+version `0.6.0` and calibrated physical end-to-end results are recorded separately in
 [regression-matrix.md](docs/regression-matrix.md).
 
 ## Conservative gesture policy
 
-A completed sequence is classified as a horizontal candidate only when:
+The completed diagnostic sequence is classified as a horizontal candidate
+when:
 
 - net horizontal distance is at least 240 CSS pixels;
 - accumulated horizontal movement is at least 4 times vertical movement;
@@ -452,8 +549,17 @@ A completed sequence is classified as a horizontal candidate only when:
 - no modifier key is pressed;
 - the page did not observably cancel the default behavior itself.
 
-`threshold-crossed` remains a provisional research log. Only `session-end` can
-request an action. The policy and its conservative tradeoffs are documented in
+`threshold-crossed` remains a provisional research log and never requests an
+action by itself. Version `0.6.0` may show the non-interactive arrow after 80
+horizontal pixels, 3:1 dominance, 85% direction consistency, four pixel-mode
+events, and a 6-pixel peak, but only when every ordinary safety blocker passes.
+Visual eligibility is not action eligibility. To avoid waiting several seconds
+for macOS momentum, version `0.5.2` added a stricter early action path: at least
+720 horizontal pixels, 5:1
+dominance, 95% direction consistency, 12 pixel events, a 12-pixel peak, every
+normal safety check, and a further 90 ms confirmation period. If that path is
+not conclusive, Backtrack retains the completed-sequence fallback. The policy
+and its conservative tradeoffs are documented in
 [gesture-safety.md](docs/gesture-safety.md).
 
 ## Permissions and privacy
@@ -461,13 +567,18 @@ request an action. The policy and its conservative tradeoffs are documented in
 | Access | Why needed? | Can it be avoided? | Theoretical data access |
 | --- | --- | --- | --- |
 | `storage` | `chrome.storage.session` keeps opaque child-entry and short gesture-cooldown state across service-worker suspension. `chrome.storage.local` keeps the user's explicit direction calibration and enabled/disabled choice. | Not safely for the current design. Losing an entry baseline or momentum claim must fail closed, and the chosen direction must survive page reloads. | The permission could also store arbitrary extension data. Backtrack stores no URLs, titles, page content, gesture logs, or browsing history. |
+| `webNavigation` | `onCreatedNavigationTarget` supplies the exact source-tab and child-tab IDs when Brave omits `openerTabId` for a link-created tab. Backtrack ignores the event URL and keeps only the two numeric IDs in session memory. | Avoiding it caused real link-created tabs to fail with `NO_OPENER`. Inferring the source from the active tab or tab position would be unsafe. | The API can theoretically expose navigation events and their URLs. Backtrack subscribes only to the new-target event, does not log or store its URL, and contacts no server. |
 | No `tabs` permission | The background uses tab lifecycle events plus `chrome.tabs.get()`, `chrome.tabs.update()`, and `chrome.tabs.remove()` for IDs, state validation, activation, and exact child closure. These operations do not require the broad permission. | Already avoided. | Without `tabs`, the API does not expose privileged URL, title, or favicon fields to Backtrack. |
-| No `webNavigation` permission | Full-document and SPA changes are observed through the Navigation API in the content script. | Already avoided. | Backtrack gains no additional extension-level navigation event or address access. |
 | Automatic content script on `http://*/*` and `https://*/*` | Gesture and history changes must be observed early across ordinary websites. | An `activeTab` research build is possible but would require a toolbar action, service worker, and an extra step on every page. Reassess before production. | A content script could theoretically read or alter page DOM. Backtrack processes only event, geometry, scroll-context, and opaque navigation-entry data. It logs no URL and contacts no server. |
 
 Backtrack does not run on `brave://`, `chrome://`, the Chrome Web Store, or
-other protected browser pages. `file://` is not matched. Subframes are included
-only when their own address matches `http://` or `https://`.
+other protected browser pages. This also includes Chromium's internal
+`chrome-error://chromewebdata/` document: when an `https://` navigation fails
+because of TLS, DNS, or another network error, the address bar may still show
+the requested site while the actual document is a protected browser error
+page. Backtrack cannot receive trackpad events there. `file://` is not matched.
+Subframes are included only when their own address matches `http://` or
+`https://`.
 
 ## Known limitations
 
@@ -475,6 +586,9 @@ only when their own address matches `http://` or `https://`.
   native macOS gesture machinery.
 - Standard `WheelEvent` cannot reliably identify trackpad versus mouse and
   exposes no standardized gesture or momentum phase.
+- Browser-generated network and certificate error pages are protected pages;
+  the ordinary two-finger gesture cannot be detected there by a content
+  script.
 - Sites with custom JavaScript gesture logic may look like ordinary scroll
   areas or evade DOM scroll detection entirely.
 - DevTools Preserve log is required if logs must survive real navigation.
@@ -486,8 +600,12 @@ only when their own address matches `http://` or `https://`.
   a missed back action over an accidental tab closure.
 - Tabs open before the extension is loaded or reloaded receive no invented
   entry point.
+- Tabs created by browser UI, extensions, restored sessions, or other paths
+  that provide neither `openerTabId` nor an exact navigation-target event stay
+  open.
 - Browser or extension restart clears volatile history state; affected tabs
-  remain untouched.
+  are never automatically closed. Ordinary Back remains available after the
+  current content scripts have loaded; refresh pages open before an update.
 - Protected pages provide no content-script history evidence and therefore
   trigger no special action.
 
@@ -495,6 +613,7 @@ only when their own address matches `http://` or `https://`.
 
 - [Chrome: content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts)
 - [Chrome: Tabs API](https://developer.chrome.com/docs/extensions/reference/api/tabs)
+- [Chrome: Web Navigation API](https://developer.chrome.com/docs/extensions/reference/api/webNavigation)
 - [Chrome: Navigation API](https://developer.chrome.com/docs/web-platform/navigation-api/)
 - [WHATWG: Navigation API](https://html.spec.whatwg.org/multipage/nav-history-apis.html)
 - [Chrome: Storage API](https://developer.chrome.com/docs/extensions/reference/api/storage/)

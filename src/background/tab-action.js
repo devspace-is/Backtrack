@@ -3,18 +3,23 @@ import {
   evaluateBackDecision,
 } from "./back-decision.js";
 import { resolveSafeOpener } from "./opener-resolver.js";
+import { NAVIGATION_REASONS } from "./navigation-tracker.js";
 
 export const TAB_ACTIONS = Object.freeze({
   USE_INTERNAL_HISTORY: "USE_INTERNAL_HISTORY",
+  USE_BROWSER_HISTORY: "USE_BROWSER_HISTORY",
   RETURNED_TO_OPENER: "RETURNED_TO_OPENER",
   NO_SPECIAL_ACTION: "NO_SPECIAL_ACTION",
 });
 
 export const TAB_ACTION_REASONS = Object.freeze({
   INTERNAL_HISTORY_AVAILABLE: "INTERNAL_HISTORY_AVAILABLE",
+  BROWSER_HISTORY_FALLBACK: "BROWSER_HISTORY_FALLBACK",
+  NAVIGATION_IN_PROGRESS: "NAVIGATION_IN_PROGRESS",
   DECISION_NOT_ELIGIBLE: "DECISION_NOT_ELIGIBLE",
   CURRENT_TAB_UNAVAILABLE: "CURRENT_TAB_UNAVAILABLE",
   CURRENT_TAB_NOT_ACTIVE: "CURRENT_TAB_NOT_ACTIVE",
+  CURRENT_TAB_CHANGED: "CURRENT_TAB_CHANGED",
   OPENER_RELATIONSHIP_CHANGED: "OPENER_RELATIONSHIP_CHANGED",
   OPENER_ACTIVATION_FAILED: "OPENER_ACTIVATION_FAILED",
   OPENER_ACTIVATION_UNCONFIRMED: "OPENER_ACTIVATION_UNCONFIRMED",
@@ -103,16 +108,46 @@ export async function performConfirmedBackAction(
     navigationTracker,
   );
 
-  if (decision.decision === BACK_DECISIONS.USE_INTERNAL_HISTORY) {
+  if (decision.decision !== BACK_DECISIONS.RETURN_TO_OPENER_ELIGIBLE) {
+    // Closing needs a proven entry and opener. Ordinary Back does not: the
+    // browser can traverse its own history, including cross-origin entries,
+    // and does nothing when there is no earlier entry.
+    if (
+      liveSnapshot?.transitionActive === true ||
+      decision.reason === NAVIGATION_REASONS.NAVIGATION_IN_PROGRESS
+    ) {
+      return noAction(TAB_ACTION_REASONS.NAVIGATION_IN_PROGRESS, decision);
+    }
+    const tabId = usableId(currentTab?.id);
+    const windowId = usableId(currentTab?.windowId);
+    if (tabId === null || windowId === null) {
+      return noAction(TAB_ACTION_REASONS.CURRENT_TAB_UNAVAILABLE, decision);
+    }
+    const liveTab = await readTab(tabsApi, tabId);
+    if (!liveTab) {
+      return noAction(TAB_ACTION_REASONS.CURRENT_TAB_UNAVAILABLE, decision);
+    }
+    if (liveTab.active !== true) {
+      return noAction(TAB_ACTION_REASONS.CURRENT_TAB_NOT_ACTIVE, decision);
+    }
+    if (
+      liveTab.id !== tabId ||
+      liveTab.windowId !== windowId ||
+      liveTab.discarded === true ||
+      (liveTab.incognito === true) !== (currentTab.incognito === true)
+    ) {
+      return noAction(TAB_ACTION_REASONS.CURRENT_TAB_CHANGED, decision);
+    }
+    const trackedHistory = decision.decision === BACK_DECISIONS.USE_INTERNAL_HISTORY;
     return {
-      action: TAB_ACTIONS.USE_INTERNAL_HISTORY,
-      reason: TAB_ACTION_REASONS.INTERNAL_HISTORY_AVAILABLE,
+      action: trackedHistory
+        ? TAB_ACTIONS.USE_INTERNAL_HISTORY
+        : TAB_ACTIONS.USE_BROWSER_HISTORY,
+      reason: trackedHistory
+        ? TAB_ACTION_REASONS.INTERNAL_HISTORY_AVAILABLE
+        : TAB_ACTION_REASONS.BROWSER_HISTORY_FALLBACK,
       decision,
     };
-  }
-
-  if (decision.decision !== BACK_DECISIONS.RETURN_TO_OPENER_ELIGIBLE) {
-    return noAction(TAB_ACTION_REASONS.DECISION_NOT_ELIGIBLE, decision);
   }
 
   const childTabId = usableId(decision.opener?.currentTab?.id);
@@ -134,7 +169,15 @@ export async function performConfirmedBackAction(
     return noAction(TAB_ACTION_REASONS.CURRENT_TAB_NOT_ACTIVE, decision);
   }
 
-  const preActivationOpener = await resolveSafeOpener(liveChild, tabsApi);
+  const expectedRelationship = {
+    openerTabId: expectedOpenerTabId,
+    source: decision.opener?.relationshipSource,
+  };
+  const preActivationOpener = await resolveSafeOpener(
+    liveChild,
+    tabsApi,
+    expectedRelationship,
+  );
   if (
     !preActivationOpener.ok ||
     preActivationOpener.currentTab?.id !== childTabId ||
@@ -175,7 +218,11 @@ export async function performConfirmedBackAction(
     );
   }
 
-  const finalOpener = await resolveSafeOpener(childBeforeClose, tabsApi);
+  const finalOpener = await resolveSafeOpener(
+    childBeforeClose,
+    tabsApi,
+    expectedRelationship,
+  );
   if (
     !finalOpener.ok ||
     finalOpener.currentTab?.id !== childTabId ||

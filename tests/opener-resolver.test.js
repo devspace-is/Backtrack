@@ -5,6 +5,7 @@ import {
   OPENER_REASONS,
   resolveSafeOpener,
 } from "../src/background/opener-resolver.js";
+import { OPENER_RELATIONSHIP_SOURCES } from "../src/background/navigation-tracker.js";
 
 function makeTab(overrides = {}) {
   return {
@@ -51,6 +52,47 @@ test("a valid opener in the same window is resolved", async () => {
   assert.equal(result.openerTab.id, 10);
   assert.equal("url" in result.openerTab, false);
   assert.equal("title" in result.openerTab, false);
+});
+
+test("a browser navigation target safely supplements a missing openerTabId", async () => {
+  const opener = makeTab({ id: 10, active: false });
+  const child = makeTab({ id: 20, openerTabId: undefined });
+
+  const result = await resolveSafeOpener(child, tabsApiFrom([opener]), {
+    openerTabId: 10,
+    source: OPENER_RELATIONSHIP_SOURCES.NAVIGATION_TARGET,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.openerTab.id, 10);
+  assert.equal(
+    result.relationshipSource,
+    OPENER_RELATIONSHIP_SOURCES.NAVIGATION_TARGET,
+  );
+});
+
+test("an untrusted fallback cannot invent an opener", async () => {
+  const opener = makeTab({ id: 10, active: false });
+  const child = makeTab({ id: 20, openerTabId: undefined });
+
+  const result = await resolveSafeOpener(child, tabsApiFrom([opener]), {
+    openerTabId: 10,
+    source: "INFERRED_ACTIVE_TAB",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, OPENER_REASONS.NO_OPENER);
+});
+
+test("conflicting live and tracked opener relationships are rejected", async () => {
+  const child = makeTab({ id: 20, openerTabId: 11 });
+  const result = await resolveSafeOpener(child, tabsApiFrom([]), {
+    openerTabId: 10,
+    source: OPENER_RELATIONSHIP_SOURCES.NAVIGATION_TARGET,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, OPENER_REASONS.OPENER_RELATIONSHIP_CONFLICT);
 });
 
 test("nested A to B to C relationships resolve one safe level at a time", async () => {

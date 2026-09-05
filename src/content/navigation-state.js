@@ -92,7 +92,11 @@
       gesture,
     });
     let internalNavigationRequested = false;
-    if (response?.action === "USE_INTERNAL_HISTORY" && navigateInternal) {
+    if (
+      navigateInternal &&
+      (response?.action === "USE_INTERNAL_HISTORY" ||
+        response?.action === "USE_BROWSER_HISTORY")
+    ) {
       try {
         globalThis.history.back();
         internalNavigationRequested = true;

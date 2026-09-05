@@ -39,6 +39,23 @@ test("unrelated messages remain available to other listeners", () => {
   assert.equal(listener({ type: "OTHER" }, {}, () => {}), false);
 });
 
+test("a subframe cannot claim a gesture or request tab navigation", async () => {
+  const listener = createNavigationMessageListener({}, {}, {
+    claim() { assert.fail("Subframes must not reach the gesture gate"); },
+  });
+  const result = await new Promise((resolve) => listener(
+    {
+      type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
+      gesture: { source: "AUTOMATIC", id: "iframe", observedAtMs: 10_000 },
+      snapshot: {},
+    },
+    { tab: { id: 20 }, frameId: 1 },
+    resolve,
+  ));
+  assert.equal(result.action, "NO_SPECIAL_ACTION");
+  assert.equal(result.reason, "NOT_TOP_FRAME");
+});
+
 test("a confirmed action message closes only an eligible sender child", async () => {
   const tabs = new Map([
     [
@@ -172,8 +189,8 @@ test("an accepted automatic gesture passes the gate before acting", async () => 
   };
   let claimed = null;
   const gate = {
-    async claim(tabId, gesture) {
-      claimed = { tabId, gesture };
+    async claim(tabId, windowId, gesture) {
+      claimed = { tabId, windowId, gesture };
       return { ok: true, reason: "ACCEPTED" };
     },
   };
@@ -196,7 +213,7 @@ test("an accepted automatic gesture passes the gate before acting", async () => 
     );
   });
 
-  assert.deepEqual(claimed, { tabId: 20, gesture });
+  assert.deepEqual(claimed, { tabId: 20, windowId: 2, gesture });
   assert.equal(response.action, "RETURNED_TO_OPENER");
   assert.equal(tabs.has(20), false);
 });

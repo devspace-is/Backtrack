@@ -1,4 +1,5 @@
-const STORAGE_PREFIX = "backtrack.gesture.action-gate.";
+const TAB_STORAGE_PREFIX = "backtrack.gesture.action-gate.tab.";
+const WINDOW_STORAGE_PREFIX = "backtrack.gesture.action-gate.window.";
 
 export const GESTURE_GATE_REASONS = Object.freeze({
   ACCEPTED: "ACCEPTED",
@@ -11,8 +12,12 @@ function usableId(value) {
   return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-function storageKey(tabId) {
-  return `${STORAGE_PREFIX}${tabId}`;
+function tabStorageKey(tabId) {
+  return `${TAB_STORAGE_PREFIX}${tabId}`;
+}
+
+function windowStorageKey(windowId) {
+  return `${WINDOW_STORAGE_PREFIX}${windowId}`;
 }
 
 function validGestureId(value) {
@@ -30,7 +35,9 @@ export class GestureActionGate {
       throw new TypeError("GestureActionGate requires a storage area.");
     }
     if (!Number.isFinite(cooldownMs) || cooldownMs < 500) {
-      throw new TypeError("GestureActionGate requires a cooldown of at least 500 ms.");
+      throw new TypeError(
+        "GestureActionGate requires a cooldown of at least 500 ms.",
+      );
     }
 
     this.storageArea = storageArea;
@@ -38,24 +45,26 @@ export class GestureActionGate {
     this.queues = new Map();
   }
 
-  #enqueue(tabId, operation) {
-    const previous = this.queues.get(tabId) ?? Promise.resolve();
+  #enqueue(scopeKey, operation) {
+    const previous = this.queues.get(scopeKey) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(operation);
-    this.queues.set(tabId, next);
+    this.queues.set(scopeKey, next);
     const cleanup = () => {
-      if (this.queues.get(tabId) === next) {
-        this.queues.delete(tabId);
+      if (this.queues.get(scopeKey) === next) {
+        this.queues.delete(scopeKey);
       }
     };
     void next.then(cleanup, cleanup);
     return next;
   }
 
-  claim(tabId, gesture, nowMs = Date.now()) {
+  claim(tabId, windowId, gesture, nowMs = Date.now()) {
     const safeTabId = usableId(tabId);
+    const safeWindowId = usableId(windowId);
     const observedAtMs = gesture?.observedAtMs;
     if (
       safeTabId === null ||
+      safeWindowId === null ||
       !validGestureId(gesture?.id) ||
       !Number.isFinite(observedAtMs) ||
       !Number.isFinite(nowMs) ||
@@ -68,30 +77,47 @@ export class GestureActionGate {
       });
     }
 
-    return this.#enqueue(safeTabId, async () => {
-      const key = storageKey(safeTabId);
-      const stored = await this.storageArea.get(key);
-      const previous = stored?.[key] ?? null;
+    const tabKey = tabStorageKey(safeTabId);
+    const windowKey = windowStorageKey(safeWindowId);
+    return this.#enqueue(windowKey, async () => {
+      const tabStored = await this.storageArea.get(tabKey);
+      const windowStored = await this.storageArea.get(windowKey);
+      const previousTab = tabStored?.[tabKey] ?? null;
+      const previousWindow = windowStored?.[windowKey] ?? null;
 
-      if (previous?.gestureId === gesture.id) {
+      if (
+        previousTab?.gestureId === gesture.id ||
+        previousWindow?.gestureId === gesture.id
+      ) {
         return {
           ok: false,
           reason: GESTURE_GATE_REASONS.DUPLICATE_GESTURE,
         };
       }
-      if (
-        Number.isFinite(previous?.claimedAtMs) &&
-        nowMs - previous.claimedAtMs < this.cooldownMs
-      ) {
-        return {
-          ok: false,
-          reason: GESTURE_GATE_REASONS.COOLDOWN_ACTIVE,
-          retryAfterMs: this.cooldownMs - (nowMs - previous.claimedAtMs),
-        };
+      for (const [scope, previous] of [
+        ["TAB", previousTab],
+        ["WINDOW", previousWindow],
+      ]) {
+        if (
+          Number.isFinite(previous?.claimedAtMs) &&
+          nowMs - previous.claimedAtMs < this.cooldownMs
+        ) {
+          return {
+            ok: false,
+            reason: GESTURE_GATE_REASONS.COOLDOWN_ACTIVE,
+            scope,
+            retryAfterMs: this.cooldownMs - (nowMs - previous.claimedAtMs),
+          };
+        }
       }
 
       await this.storageArea.set({
-        [key]: {
+        [tabKey]: {
+          schemaVersion: 1,
+          gestureId: gesture.id,
+          claimedAtMs: nowMs,
+        },
+        [windowKey]: {
           schemaVersion: 1,
           gestureId: gesture.id,
           claimedAtMs: nowMs,
@@ -109,8 +135,16 @@ export class GestureActionGate {
     if (safeTabId === null) {
       return Promise.resolve();
     }
-    return this.#enqueue(safeTabId, () =>
-      this.storageArea.remove(storageKey(safeTabId)),
-    );
+    const key = tabStorageKey(safeTabId);
+    return this.#enqueue(key, () => this.storageArea.remove(key));
+  }
+
+  removeWindow(windowId) {
+    const safeWindowId = usableId(windowId);
+    if (safeWindowId === null) {
+      return Promise.resolve();
+    }
+    const key = windowStorageKey(safeWindowId);
+    return this.#enqueue(key, () => this.storageArea.remove(key));
   }
 }

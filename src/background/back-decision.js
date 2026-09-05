@@ -13,7 +13,15 @@ export async function evaluateBackDecision(
   tabsApi,
   navigationTracker,
 ) {
-  const opener = await resolveSafeOpener(currentTab, tabsApi);
+  const trackedRelationship =
+    typeof navigationTracker?.getValidatedOpener === "function"
+      ? await navigationTracker.getValidatedOpener(currentTab?.id)
+      : null;
+  const opener = await resolveSafeOpener(
+    currentTab,
+    tabsApi,
+    trackedRelationship,
+  );
   if (!opener.ok) {
     return {
       decision: BACK_DECISIONS.NO_SPECIAL_ACTION,

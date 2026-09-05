@@ -368,7 +368,7 @@ must always result in no action and, in particular, no tab closure.
 
 ## Phase 2 safety implementation addendum
 
-Development version `0.5.0` implements the conservative policy derived from
+Development version `0.5.2` implements the conservative policy derived from
 this evidence without changing the historical Phase 1 measurements above:
 
 - physical X signs remain semantically unassigned until explicit local
@@ -380,9 +380,13 @@ this evidence without changing the historical Phase 1 measurements above:
   directional consistency, 8 pixel-mode events, and an 8-pixel peak;
 - consumable or ambiguous horizontal scroll contexts are rejected;
 - inner horizontal scrollers remain blocked even at their edge;
-- action occurs only after sequence completion;
-- a session-backed 1.8-second per-tab gate rejects duplicate IDs and split
-  momentum tails.
+- the preliminary threshold never acts by itself;
+- a stronger 720-pixel, 5:1, 95%, 12-event, 12-pixel-peak candidate can act
+  after remaining eligible for a further 90 ms, avoiding the complete macOS
+  momentum tail;
+- completed-sequence evaluation remains the fallback;
+- a session-backed 1.8-second tab-and-window gate rejects duplicate IDs and
+  momentum tails that continue after navigation or a tab switch.
 
 This is implementation progress, not new physical-trackpad evidence and not a
 production Go. The extended real-site and multi-configuration matrix remains

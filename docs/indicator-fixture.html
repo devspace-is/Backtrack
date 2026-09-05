@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>Backtrack Indicator Test Fixture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: #0d141c;
+        color: #edf4ff;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+      }
+
+      main {
+        width: min(680px, calc(100vw - 48px));
+        padding: 36px;
+        border: 1px solid #2c3d52;
+        border-radius: 20px;
+        background: #131e2a;
+        box-shadow: 0 24px 80px rgb(0 0 0 / 35%);
+      }
+
+      h1 {
+        margin-top: 0;
+      }
+
+      p {
+        color: #aebdd0;
+        line-height: 1.55;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      button {
+        border: 1px solid #47617d;
+        border-radius: 999px;
+        padding: 10px 16px;
+        color: inherit;
+        background: #1b2a3a;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #24384d;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Backtrack Indicator Test Fixture</h1>
+      <p>
+        This local page renders the real indicator module for visual review.
+        Its controls perform no navigation and create no gesture events.
+      </p>
+      <div class="controls">
+        <button type="button" data-preview="tracking">Tracking</button>
+        <button type="button" data-preview="armed">Armed</button>
+        <button type="button" data-preview="commit">Commit</button>
+        <button type="button" data-preview="hide">Hide</button>
+      </div>
+    </main>
+    <script src="../src/content/gesture-indicator.js"></script>
+    <script>
+      const indicator = globalThis.BacktrackGestureIndicator;
+      const show = (phase) =>
+        indicator.update({
+          progress: phase === "armed" ? 1 : 0.7,
+          clientY: window.innerHeight / 2,
+          phase,
+        });
+
+      document.addEventListener("click", (event) => {
+        const action = event.target.closest("[data-preview]")?.dataset.preview;
+        if (action === "tracking" || action === "armed") {
+          show(action);
+        } else if (action === "commit") {
+          indicator.commit();
+        } else if (action === "hide") {
+          indicator.hide({ delayMs: 0 });
+        }
+      });
+
+      show("tracking");
+    </script>
+  </body>
+</html>

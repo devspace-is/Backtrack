@@ -1,6 +1,6 @@
 # Guarded Child-Tab Action
 
-Status: August 30, 2026
+Status: September 5, 2026
 
 ## Purpose
 
@@ -20,6 +20,13 @@ Version `0.5.0` connects this action to the conservative completed-sequence
 classifier. The connection is inactive by default and requires an explicit
 local direction calibration. The manual isolated development API remains
 available for a controlled action test without gesture classification.
+Version `0.5.1` additionally accepts an exact browser navigation-target
+relationship when Brave omits `openerTabId` for a link-created tab.
+Version `0.5.2` can deliver the same confirmed semantic request from the
+stricter early-commit path, without weakening any history or opener
+precondition in this action layer.
+Version `0.6.1` separates ordinary browser Back from child-closure eligibility:
+an untracked tab or a tab without an opener can still traverse its own history.
 
 ## Preconditions
 
@@ -27,7 +34,8 @@ The action stops without changing tabs unless all of these checks succeed:
 
 - the request comes from a real browser tab;
 - the sender tab is still the active tab in its window;
-- it was tracked from creation as a child with a validated `openerTabId`;
+- it was tracked from creation with either a validated `openerTabId` or the
+  browser's exact `onCreatedNavigationTarget` source and child IDs;
 - its entry point was captured passively before the action request;
 - the history tracker reports the exact captured child entry point;
 - the opener still exists, has the expected ID, and is in the same window;
@@ -60,11 +68,21 @@ by another close attempt.
 ## Internal history
 
 `USE_INTERNAL_HISTORY` always wins over opener behavior. The action layer
-returns that result without calling either tab-mutation API. Browser or later
-gesture orchestration can then perform the normal in-tab back step.
+returns that result without calling either tab-mutation API. The automatic
+content-side request then performs the normal in-tab back step.
 
-Only `RETURN_TO_OPENER_ELIGIBLE` can reach the guarded action path.
-`NO_SPECIAL_ACTION` always remains a no-op.
+Only the decision `RETURN_TO_OPENER_ELIGIBLE` can reach the guarded close path.
+A decision of `NO_SPECIAL_ACTION` means closure is ineligible, not that ordinary
+Back should be swallowed. After re-reading the sender tab and checking its ID,
+active state, window, discarded state, and private-browsing context, the action
+layer can return `USE_BROWSER_HISTORY` instead. The content script then calls
+`history.back()` once. This works without a tracked baseline or a same-origin
+`navigation.canGoBack` signal and is a no-op at the start of browser history.
+
+An in-progress navigation, inactive or changed sender, rejected gesture,
+unsupported frame, or failed action still returns an action of
+`NO_SPECIAL_ACTION`. It never triggers a history fallback. In particular,
+Backtrack does not try browser Back after a failed opener activation or close.
 
 ## Nested tabs
 
@@ -83,7 +101,10 @@ Tab B returns one more level.
 The manifest injects content scripts only into ordinary `http://` and
 `https://` pages. `brave://`, `chrome://`, extension stores, extension pages,
 and other protected surfaces cannot send the page-side confirmed-action
-message. A missing sender tab is also rejected by the background action.
+message. This includes `chrome-error://chromewebdata/`, which Chromium uses
+after TLS, DNS, and other network failures even when the address bar continues
+to display the requested `https://` address. A missing sender tab is also
+rejected by the background action.
 
 ## Permission and privacy
 
@@ -91,6 +112,11 @@ No `tabs` permission is requested. Chromium allows the extension to use
 `tabs.get()`, `tabs.update()`, and `tabs.remove()` without that broad permission.
 Backtrack reads only non-sensitive tab metadata needed for the decision and
 does not access or retain URLs, titles, favicons, or page content.
+
+The `webNavigation` permission is used only for the exact
+`onCreatedNavigationTarget` relationship. Although that event includes a URL,
+Backtrack ignores it and stores only the source and child tab IDs in volatile
+session storage.
 
 The action uses no server, analytics, telemetry, persistent tab tree, or
 persistent browsing history.
@@ -111,9 +137,14 @@ The command may close the current tab. Expected results:
 | --- | --- |
 | Child at its tracked entry point, valid opener | Opener becomes active and child closes |
 | Child beyond its entry point | `USE_INTERNAL_HISTORY`; no tab changes |
-| Manually opened tab | `NO_SPECIAL_ACTION`; tab remains open |
-| Opener was closed | `NO_SPECIAL_ACTION`; tab remains open |
-| Child or opener moved to a different window | `NO_SPECIAL_ACTION`; tab remains open |
+| Manually opened tab | `USE_BROWSER_HISTORY`; tab remains open |
+| Opener was closed | `USE_BROWSER_HISTORY`; tab remains open |
+| Child and opener are already in different windows | `USE_BROWSER_HISTORY`; tab remains open |
+| Sender becomes inactive or changes windows during the request | `NO_SPECIAL_ACTION` |
+
+This manual command only reports the two history actions. The automatic
+gesture request executes them in the requesting page; it does not close the
+tab when no earlier browser-history entry exists.
 
 Automated tests also cover ordering, API failures, focus restoration, changed
 relationships, missing sender tabs, and nested child tabs.
