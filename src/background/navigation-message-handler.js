@@ -1,12 +1,17 @@
 import { evaluateBackDecision } from "./back-decision.js";
 import { performConfirmedBackAction } from "./tab-action.js";
 import { MESSAGE_TYPES } from "../shared/messages.js";
+import {
+  diagnosticOrigin, navigationDiagnostic, DEFAULT_ACTION_LIMIT, DEFAULT_DIAGNOSTIC_LOG_LIMIT,
+} from "./diagnostic-log.js";
+import { reviewDiagnosticLog } from "./diagnostic-review.js";
 
 export function createNavigationMessageListener(
   tabsApi,
   navigationTracker,
   gestureActionGate = null,
   diagnosticLog = null,
+  backNavigationLoopGuard = null,
 ) {
   const recordDiagnostic = async (entry) => {
     try {
@@ -16,17 +21,26 @@ export function createNavigationMessageListener(
     }
   };
 
+  const senderDiagnostic = (sender) => ({
+    tabId: sender?.tab?.id,
+    windowId: sender?.tab?.windowId,
+    documentId: sender?.documentId,
+    origin: diagnosticOrigin(sender?.origin ?? sender?.url),
+  });
+
   const actionDiagnostic = (sender, message, result, gateReason = null) => ({
     kind: "BACK_ACTION",
     recordedAtMs: Date.now(),
-    tabId: sender?.tab?.id,
-    windowId: sender?.tab?.windowId,
+    ...senderDiagnostic(sender),
     source: message?.gesture?.source,
     action: result?.action,
     reason: result?.reason,
     decision: result?.decision?.decision,
     decisionReason: result?.decision?.reason,
     gateReason,
+    retryAfterMs: result?.gestureGate?.retryAfterMs,
+    openerTabId: result?.openerTabId ?? result?.decision?.opener?.openerTab?.id,
+    navigation: navigationDiagnostic(message?.snapshot),
   });
 
   return (message, sender, sendResponse) => {
@@ -37,8 +51,21 @@ export function createNavigationMessageListener(
       }
       navigationTracker
         .recordSnapshot(sender?.tab?.id, message.snapshot, sender?.documentId)
-        .then((state) => sendResponse({ ok: state !== null }))
-        .catch(() => sendResponse({ ok: false }));
+        .then((state) => {
+          sendResponse({ ok: state !== null });
+          void recordDiagnostic({
+            kind: "NAVIGATION_STATE", ...senderDiagnostic(sender),
+            reason: state?.documentId && state.documentId !== sender?.documentId
+              ? "STALE_DOCUMENT" : null,
+            navigation: navigationDiagnostic(message.snapshot, state),
+          });
+        })
+        .catch(() => {
+          sendResponse({ ok: false });
+          void recordDiagnostic({
+            kind: "NAVIGATION_STATE", ...senderDiagnostic(sender), reason: "TRACKER_ERROR",
+          });
+        });
       return true;
     }
 
@@ -48,7 +75,13 @@ export function createNavigationMessageListener(
         return false;
       }
       navigationTracker.recordInteraction(sender?.tab?.id, sender?.documentId)
-        .then((state) => sendResponse({ ok: state !== null }))
+        .then((state) => {
+          sendResponse({ ok: state !== null });
+          void recordDiagnostic({
+            kind: "NAVIGATION_STATE", ...senderDiagnostic(sender),
+            event: "USER_INTERACTION", navigation: navigationDiagnostic(null, state),
+          });
+        })
         .catch(() => sendResponse({ ok: false }));
       return true;
     }
@@ -76,11 +109,31 @@ export function createNavigationMessageListener(
       recordDiagnostic({
         ...message.diagnostic,
         recordedAtMs: Date.now(),
-        tabId: sender?.tab?.id,
-        windowId: sender?.tab?.windowId,
+        ...senderDiagnostic(sender),
       })
         .then(() => sendResponse({ ok: true }))
         .catch(() => sendResponse({ ok: false }));
+      return true;
+    }
+
+    if (message?.type === MESSAGE_TYPES.GET_DIAGNOSTIC_REPORT) {
+      Promise.resolve(diagnosticLog?.list?.() ?? []).then((entries) => sendResponse({
+        ok: true, schemaVersion: 2, exportedAtMs: Date.now(),
+        retention: { actions: DEFAULT_ACTION_LIMIT, context: DEFAULT_DIAGNOSTIC_LOG_LIMIT - DEFAULT_ACTION_LIMIT },
+        storageError: diagnosticLog?.lastError ?? null,
+        review: reviewDiagnosticLog(entries), entries,
+      })).catch(() => sendResponse({ ok: false, reason: "STORAGE_UNAVAILABLE" }));
+      return true;
+    }
+
+    if (message?.type === MESSAGE_TYPES.NAVIGATION_RESULT) {
+      if (sender?.frameId !== 0) { sendResponse({ ok: false }); return false; }
+      recordDiagnostic({
+        kind: "NAVIGATION_RESULT", ...senderDiagnostic(sender),
+        action: message.action,
+        internalNavigationRequested: message.internalNavigationRequested,
+        navigation: navigationDiagnostic(message.snapshot),
+      }).then(() => sendResponse({ ok: true }));
       return true;
     }
 
@@ -99,14 +152,22 @@ export function createNavigationMessageListener(
     }
 
     if (message?.type === MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION) {
+      const startedAtMs = Date.now();
+      const logAction = (result, gateReason = null) => {
+        // Storage is deliberately outside the navigation response's critical path.
+        void recordDiagnostic({
+          ...actionDiagnostic(sender, message, result, gateReason),
+          durationMs: Date.now() - startedAtMs,
+        });
+        return result;
+      };
       const runAction = async () => {
         if (sender?.frameId !== undefined && sender.frameId !== 0) {
           const result = {
             action: "NO_SPECIAL_ACTION",
             reason: "NOT_TOP_FRAME",
           };
-          await recordDiagnostic(actionDiagnostic(sender, message, result));
-          return result;
+          return logAction(result);
         }
         if (message?.gesture?.source === "AUTOMATIC") {
           if (!gestureActionGate) {
@@ -114,8 +175,7 @@ export function createNavigationMessageListener(
               action: "NO_SPECIAL_ACTION",
               reason: "GESTURE_GATE_UNAVAILABLE",
             };
-            await recordDiagnostic(actionDiagnostic(sender, message, result));
-            return result;
+            return logAction(result);
           }
           const claim = await gestureActionGate.claim(
             sender?.tab?.id,
@@ -128,18 +188,14 @@ export function createNavigationMessageListener(
               reason: "GESTURE_DEDUPLICATED",
               gestureGate: claim,
             };
-            await recordDiagnostic(
-              actionDiagnostic(sender, message, result, claim.reason),
-            );
-            return result;
+            return logAction(result, claim.reason);
           }
         } else if (message?.gesture?.source !== "MANUAL_DEVELOPMENT") {
           const result = {
             action: "NO_SPECIAL_ACTION",
             reason: "UNSUPPORTED_ACTION_SOURCE",
           };
-          await recordDiagnostic(actionDiagnostic(sender, message, result));
-          return result;
+          return logAction(result);
         }
 
         const result = await performConfirmedBackAction(
@@ -148,17 +204,31 @@ export function createNavigationMessageListener(
           tabsApi,
           navigationTracker,
         );
-        await recordDiagnostic(actionDiagnostic(sender, message, result));
-        return result;
+        if (
+          message?.gesture?.source === "AUTOMATIC" &&
+          result?.action === "USE_INTERNAL_HISTORY"
+        ) {
+          try {
+            backNavigationLoopGuard?.recordAttempt?.({
+              tabId: sender?.tab?.id,
+              documentId: sender?.documentId,
+              entryKey: message?.snapshot?.currentEntryKey,
+              url: sender?.url,
+            });
+          } catch {
+            // Losing correlation must only cause a safe missed loop detection.
+          }
+        }
+        return logAction(result);
       };
 
       runAction()
         .then(sendResponse)
         .catch(() =>
-          sendResponse({
+          sendResponse(logAction({
             action: "NO_SPECIAL_ACTION",
             reason: "INTERNAL_ERROR",
-          }),
+          })),
         );
       return true;
     }

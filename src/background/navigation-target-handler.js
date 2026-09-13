@@ -54,15 +54,20 @@ export function createNavigationTargetListener(
   tabsApi,
   navigationTracker,
   logger = console,
+  recordDiagnostic = () => {},
 ) {
   return (details) => {
     void registerNavigationTarget(details, tabsApi, navigationTracker)
       .then((result) => {
+        recordDiagnostic({
+          kind: "TAB_EVENT", event: "NAVIGATION_TARGET", tabId: details.tabId,
+          openerTabId: details.sourceTabId, reason: result.reason,
+        });
         logger.info("[Backtrack:Opener]", {
           event: "navigation-target-created",
           result,
           notice:
-            "Session-only relationship metadata; no URL, title, or page content is retained.",
+            "Live relationship stays in session memory; the development log records IDs and validation reason only.",
         });
       })
       .catch(async () => {

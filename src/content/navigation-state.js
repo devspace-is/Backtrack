@@ -12,6 +12,7 @@
   const MESSAGE_TYPES = Object.freeze({
     NAVIGATION_SNAPSHOT: "BACKTRACK_NAVIGATION_SNAPSHOT",
     NAVIGATION_INTERACTION: "BACKTRACK_NAVIGATION_INTERACTION",
+    NAVIGATION_RESULT: "BACKTRACK_NAVIGATION_RESULT",
     GET_BACK_DECISION: "BACKTRACK_GET_BACK_DECISION",
     PERFORM_CONFIRMED_BACK_ACTION: "BACKTRACK_PERFORM_CONFIRMED_BACK_ACTION",
   });
@@ -115,6 +116,10 @@
       localSnapshot: snapshotApi.diagnosticView(snapshot),
       response,
       internalNavigationRequested,
+    });
+    sendMessage({
+      type: MESSAGE_TYPES.NAVIGATION_RESULT, action: response?.action,
+      internalNavigationRequested, snapshot,
     });
     return { ...response, internalNavigationRequested };
   }

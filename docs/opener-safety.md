@@ -78,14 +78,15 @@ The validation processes only short-lived tab metadata in the background:
   navigation-target event;
 - active, pinned, discarded, private, and group state.
 
-Diagnostic objects contain no URL, page title, favicon, or page content. Since
+Opener-resolver objects contain no URL, page title, favicon, or page content. Since
 version `0.3.0`, the separate history component uses volatile session storage
 (`storage.session`) for opaque navigation-entry keys. Version `0.6.3` adds a
-separate bounded local diagnostic ring for development: it accepts only
-whitelisted numeric tab/window IDs, rounded gesture thresholds, and action or
-decision codes. It explicitly rejects URLs, titles, page text, raw wheel
-events, arbitrary page data, and browsing history. There is no telemetry or
-server connection.
+separate bounded local diagnostic ring for development. With the developer
+user's authorization, `0.6.5` extends it to 400 actions and 1,600 context events,
+including origins, opaque entry/document UUIDs, history counts and timing.
+It rejects full addresses, titles, page text, credentials and raw input. This
+development trail is never a source of opener authority. There is no telemetry
+or server connection. See [`diagnostic-log.md`](diagnostic-log.md).
 
 ## Permission
 
@@ -108,9 +109,12 @@ numeric source and child tab IDs in `storage.session`. This avoids a much less
 reliable and more dangerous guess based on the active tab or tab position.
 
 Since `0.6.4`, the separate history component also uses top-level `onCommitted`
-metadata to recognize guarded automatic opening redirects. It discards event
-URLs and retains only opaque document identity and safety flags in session
-state; it cannot invent or replace an opener relationship. See
+metadata to recognize guarded automatic opening redirects. Version `0.6.5`
+also correlates one pending internal Back with a browser-confirmed redirect to
+the exact same page. Full addresses are compared only in short-lived worker
+memory and discarded immediately; only opaque document identity and safety
+flags enter session state. Neither mechanism can invent or replace an opener
+relationship. See
 [`internal-history.md`](internal-history.md).
 
 The background process is registered as a module service worker in the

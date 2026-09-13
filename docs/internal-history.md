@@ -122,6 +122,40 @@ original entry and never authorizes an inferred close.
 This is not a URL-based redirect detector and uses no elapsed-time heuristic.
 No site-specific rules, redirect URL list, or persistent history is stored.
 
+## Redirected-Back loop recovery (0.6.5)
+
+A page reached after deliberate child-tab navigation can make its predecessor
+unreachable: browser Back reaches that predecessor, which immediately redirects
+to the exact page the user just left. Merely seeing a redirect or a changed
+Navigation API key is not enough to close the child.
+
+Backtrack recognizes an effective return boundary only when every following
+condition is present:
+
+- Backtrack itself authorized an automatic `USE_INTERNAL_HISTORY` action from
+  a tracked child and recorded its exact document and opaque entry identity.
+- The next top-level active-document commit arrives within ten seconds.
+- Chromium labels that commit `forward_back` and also `server_redirect` or
+  `client_redirect`.
+- The committed HTTP(S) address is exactly the address from which Back was
+  requested. The two addresses are held only in volatile service-worker memory
+  for this equality check and are then discarded.
+- The attempted opaque entry still matches the tracker's current entry.
+- The destination document reports a fresh `push` or `replace` entry and
+  `navigation.canGoBack === false` for its visible same-origin history.
+- The live action snapshot still identifies that exact loop entry.
+
+The next deliberate Back may then use the existing guarded opener-return path.
+The opener must still exist in the same window and is validated before and
+after focus changes. A different destination, remaining same-origin history,
+an expired/missing correlation, worker restart before the commit, changed
+entry, protected page, or incomplete browser metadata does not authorize a
+close. A later normal navigation also removes the loop marker.
+
+The short-lived full-address comparison is not part of the persistent
+development log or `storage.session`. Only the resulting boolean safety marker,
+opaque entry/document identity and reason code may survive worker suspension.
+
 ## Full pages and single-page applications
 
 The content script runs early on ordinary `http://` and `https://` pages. It
@@ -155,18 +189,23 @@ This session storage:
 
 The permission could theoretically also allow persistent extension storage.
 The history component itself calls only `storage.session`; since version
-`0.6.3`, a separate privacy-filtered diagnostic ring uses `storage.local` for
-at most 160 compact records. It contains no URLs, titles, page text, raw wheel
-events, or browser-history entries. Without session storage, the entry point
+`0.6.3`, a separate diagnostic ring uses `storage.local`. With the developer
+user's explicit authorization, `0.6.5` retains 400 action attempts and 1,600
+context events, including origins and opaque navigation/document UUIDs.
+Full addresses, titles, page text and raw input remain excluded. The live
+tracker never reads this log or restores closure eligibility from it. See
+[`diagnostic-log.md`](diagnostic-log.md). Without session storage, the entry point
 would become unknown after a routine background-process restart. Inventing a
 new baseline would be more dangerous than keeping this small volatile state.
 
 Version `0.5.1` added `webNavigation.onCreatedNavigationTarget` for exact
 source-to-child relationships when `openerTabId` is missing. Version `0.6.4`
-also observes top-level `onCommitted` metadata for the redirect guard above.
-No new permission is added. Internal-history positions still come from the
-page-side Navigation API. Event URLs are discarded before tracker processing;
-only tab IDs, opaque entry/document keys and safety flags enter session state.
+also observes top-level `onCommitted` metadata for opening redirects, and
+`0.6.5` correlates one pending internal Back with a redirected return to the
+exact same address. No new permission is added. Internal-history positions
+still come from the page-side Navigation API. Full addresses are never stored:
+only the equality result, tab IDs, opaque entry/document keys and safety flags
+enter session state.
 
 ## Safe behavior when evidence is missing
 

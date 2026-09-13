@@ -19,6 +19,8 @@ export const NAVIGATION_REASONS = Object.freeze({
   TRACKED_INTERNAL_ENTRY: "TRACKED_INTERNAL_ENTRY",
   TRACKED_ENTRY_POINT: "TRACKED_ENTRY_POINT",
   TRACKED_REDIRECT_ENTRY_POINT: "TRACKED_REDIRECT_ENTRY_POINT",
+  TRACKED_BACK_REDIRECT_LOOP_ENTRY_POINT:
+    "TRACKED_BACK_REDIRECT_LOOP_ENTRY_POINT",
   NOT_TRACKED: "NOT_TRACKED",
   AWAITING_ENTRY: "AWAITING_ENTRY",
   OPENER_NOT_VALIDATED: "OPENER_NOT_VALIDATED",
@@ -111,6 +113,8 @@ export function createCandidateState(tab, relationship = null) {
     pendingRedirectDocumentId: null,
     baselineAllowsSameOriginBack: false,
     baselineFromInitialRedirect: false,
+    pendingBackRedirectLoopDocumentId: null,
+    backRedirectLoopEntryKey: null,
   };
 }
 
@@ -142,6 +146,10 @@ export function applyNavigationSnapshot(state, snapshot) {
         ? snapshot.sameOriginCanGoBack
         : null,
     transitionActive: snapshot.transitionActive === true,
+    backRedirectLoopEntryKey:
+      state.backRedirectLoopEntryKey === entryKey
+        ? state.backRedirectLoopEntryKey
+        : null,
   };
 
   if (state.baselineEntryKey === null) {
@@ -222,7 +230,10 @@ export function assessTrackedNavigation(state, liveSnapshot = null) {
     };
   }
 
-  if (state.pendingRedirectDocumentId) {
+  if (
+    state.pendingRedirectDocumentId ||
+    state.pendingBackRedirectLoopDocumentId
+  ) {
     return {
       availability: NAVIGATION_AVAILABILITY.UNKNOWN,
       reason: NAVIGATION_REASONS.NAVIGATION_IN_PROGRESS,
@@ -248,6 +259,16 @@ export function assessTrackedNavigation(state, liveSnapshot = null) {
   }
 
   if (state.currentEntryKey !== state.baselineEntryKey) {
+    if (
+      state.backRedirectLoopEntryKey === state.currentEntryKey &&
+      state.sameOriginCanGoBack === false &&
+      liveSnapshot?.sameOriginCanGoBack === false
+    ) {
+      return {
+        availability: NAVIGATION_AVAILABILITY.AT_ENTRY_POINT,
+        reason: NAVIGATION_REASONS.TRACKED_BACK_REDIRECT_LOOP_ENTRY_POINT,
+      };
+    }
     return {
       availability: NAVIGATION_AVAILABILITY.INTERNAL_BACK_AVAILABLE,
       reason: NAVIGATION_REASONS.TRACKED_INTERNAL_ENTRY,
@@ -364,7 +385,8 @@ export class NavigationTracker {
   }
 
   recordDocumentCommit({
-    tabId, frameId, documentId, documentLifecycle, transitionType, transitionQualifiers,
+    tabId, frameId, documentId, documentLifecycle, transitionType,
+    transitionQualifiers, backRedirectLoop = false, backAttemptEntryKey = null,
   }) {
     const safeTabId = usableId(tabId);
     const safeDocumentId = usableEntryKey(documentId);
@@ -381,6 +403,14 @@ export class NavigationTracker {
       if (state.documentId === safeDocumentId) return state;
       const qualifiers = Array.isArray(transitionQualifiers)
         ? transitionQualifiers : [];
+      const confirmedBackRedirectLoop =
+        backRedirectLoop === true &&
+        usableEntryKey(backAttemptEntryKey) === state.currentEntryKey &&
+        assessTrackedNavigation(state).availability ===
+          NAVIGATION_AVAILABILITY.INTERNAL_BACK_AVAILABLE &&
+        qualifiers.includes("forward_back") &&
+        (qualifiers.includes("server_redirect") ||
+          qualifiers.includes("client_redirect"));
       const initialRedirect =
         state.initialRedirectChainOpen === true &&
         assessTrackedNavigation(state).availability === NAVIGATION_AVAILABILITY.AT_ENTRY_POINT &&
@@ -396,6 +426,9 @@ export class NavigationTracker {
         documentId: safeDocumentId,
         documentHasUserActivation: null,
         pendingRedirectDocumentId: initialRedirect ? safeDocumentId : null,
+        pendingBackRedirectLoopDocumentId: confirmedBackRedirectLoop
+          ? safeDocumentId
+          : null,
         initialRedirectChainOpen: initialRedirect || state.baselineEntryKey === null,
         revision: state.revision + 1,
       });
@@ -445,6 +478,23 @@ export class NavigationTracker {
           initialRedirectChainOpen: state.initialRedirectChainOpen,
           baselineAllowsSameOriginBack: snapshot.sameOriginCanGoBack === true,
           baselineFromInitialRedirect: true,
+        };
+      }
+      if (
+        state?.pendingBackRedirectLoopDocumentId &&
+        documentId === state.pendingBackRedirectLoopDocumentId &&
+        snapshot?.apiAvailable === true &&
+        usableEntryKey(snapshot.currentEntryKey)
+      ) {
+        const confirmedLoopEntry =
+          snapshot.sameOriginCanGoBack === false &&
+          ["push", "replace"].includes(snapshot.navigationType);
+        next = {
+          ...next,
+          pendingBackRedirectLoopDocumentId: null,
+          backRedirectLoopEntryKey: confirmedLoopEntry
+            ? snapshot.currentEntryKey
+            : null,
         };
       }
       if (next && usableEntryKey(documentId)) {

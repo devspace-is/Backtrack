@@ -9,7 +9,7 @@
     return;
   }
 
-  const VERSION = "0.6.4";
+  const VERSION = "0.6.5";
   const LOG_PREFIX = "[Backtrack:Gesture]";
   const SESSION_SUMMARY_PREFIX = "[Backtrack:Gesture:SessionJSON]";
   const THRESHOLD_SUMMARY_PREFIX = "[Backtrack:Gesture:ThresholdJSON]";
@@ -1324,6 +1324,13 @@
         return response?.cleared === true;
       } catch {
         return false;
+      }
+    },
+    getPersistentDiagnosticReport: async () => {
+      try {
+        return await chrome.runtime.sendMessage({ type: "BACKTRACK_GET_DIAGNOSTIC_REPORT" });
+      } catch {
+        return { ok: false, reason: "EXTENSION_UNAVAILABLE" };
       }
     },
     calibrateBackDirection,

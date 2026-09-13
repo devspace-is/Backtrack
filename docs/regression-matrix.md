@@ -132,16 +132,51 @@ tracker returned `AT_ENTRY_POINT / TRACKED_REDIRECT_ENTRY_POINT` when supplied
 with the confirmed, unattended client-redirect metadata. This is controlled
 before/after evidence, not a capture of the real site's initial transition.
 
-Version `0.6.4` navigation-fix subset: **173 passed, 0 failed**. These tests
-cover the redirect baseline, document/interaction guards and the existing
-gesture, opener, history and failure behavior.
+Current automated result before redirected-Back-loop recovery: **187 passed,
+0 failed**. This includes the separately
+requested development event log, expanded to **400 action attempts plus 1,600
+context events**. Retention groups, persistence across recorder instances,
+sanitization, deduplication, storage failure/recovery, non-blocking action
+responses and worker event wiring are covered. Review tests distinguish
+possible anomalies from observed successful progress and ordinary deduplication.
+
+### September 13, 2026: redirected Back returned to GitHub
+
+The expanded development log captured a later child that started on its source
+site, recorded user activation, and then reached GitHub through a form submit
+plus server redirect. This was correctly not promoted as an unattended opening
+redirect. Backtrack authorized internal history on the first gesture. Chromium
+then reported `forward_back` plus `server_redirect`, but the committed document
+was again on GitHub with a fresh entry key and `canGoBack: false`. The tracker
+therefore kept returning `TRACKED_INTERNAL_ENTRY`. One rapid follow-up was
+correctly rejected by the momentum cooldown; another internal Back produced no
+observed progress. The tab was later removed without a successful opener return.
+
+Version `0.6.5` adds a separate, narrowly bounded recovery path. It correlates
+one automatic internal-Back request with the next top-level commit and accepts
+a loop only when a redirected Back returns to the exact same HTTP(S) address,
+the opaque attempted entry still matches, the destination produces a fresh
+`push`/`replace` entry, and no same-origin Back entry remains. The full addresses
+exist only for the equality comparison in volatile worker memory and are never
+stored or logged. A different destination, remaining history, expired or lost
+correlation, worker restart before commit, mismatched entry, or later navigation
+does not authorize closure.
+
+Automated result for the complete development tree: **203 passed, 0 failed**.
+New coverage includes one-shot exact-address correlation, server/client redirect
+qualifiers, different destinations, normal traversal, ordinary redirects,
+expiration, mismatched entry identity, remaining same-origin history, later
+navigation, worker restart after the safe marker, exact opener focus and child
+closure, plus the real message layer recording the attempt before traversal.
+This is controlled evidence; the affected physical website still requires a
+fresh child and trackpad retest after reloading version `0.6.5`.
 
 The change has not yet been verified with a physical swipe in the updated
 Brave extension. An automated pass is not confirmation that the inspected
 real-world wrapper emits every signal required by the conservative guard.
 
-Retest after reloading Backtrack `0.6.4`; existing children cannot be adopted
-retroactively. Serve `docs` as described in the README, then:
+Retest opening redirects after reloading Backtrack `0.6.5`; existing children
+cannot be adopted retroactively. Serve `docs` as described in the README, then:
 
 1. Open `navigation-fixture.html` and select **Open child through automatic
    redirect**. Leave the intermediate page untouched.
@@ -156,6 +191,15 @@ retroactively. Serve `docs` as described in the README, then:
    redirect. It must remain the original entry, not be skipped by child closure.
 
 Do not mark any physical case passed until it has actually been observed.
+
+For the redirected-Back-loop regression, open a fresh child, deliberately
+navigate from its entry page to the affected GitHub destination, and swipe Back.
+If the predecessor redirects immediately to the exact GitHub page, wait until
+the redirect visibly settles and make one new deliberate Back gesture. The
+child should close and focus its valid opener. The diagnostic sequence should
+contain `BACK_REDIRECT_LOOP_DETECTED`, then
+`TRACKED_BACK_REDIRECT_LOOP_ENTRY_POINT`, then `RETURNED_TO_OPENER`. A different
+page after the first Back must remain internal and must not close.
 
 ## Physical Brave/macOS matrix
 

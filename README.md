@@ -23,6 +23,15 @@ planning are maintained in English.
 
 **Phase 2, four bounded components complete.**
 
+Version `0.6.5` handles a confirmed redirected-Back loop. When Backtrack asks
+the browser to traverse internal history, the committed navigation is both a
+Back/Forward traversal and a redirect, and it returns to the exact same page,
+the next live snapshot can mark that page as the effective return boundary.
+The next deliberate Back gesture may then return to the still-valid opener.
+Exact URL comparison exists only for the pending attempt in volatile worker
+memory; no full address is persisted or logged. Ambiguous and changed-page
+cases keep using internal history.
+
 Version `0.6.4` adds conservative handling for automatic opening redirects.
 A child may first load a redirect wrapper before reaching the linked page.
 Browser-confirmed, unattended client redirects can now establish that landing
@@ -30,6 +39,11 @@ page as the effective child entry. Subsequent deliberate navigation remains
 internal history. Automated coverage passes; the updated real-trackpad
 sequence still needs confirmation in Brave after reloading the extension and
 opening a fresh child tab. See the [regression matrix](docs/regression-matrix.md).
+
+This development build also records the latest **400 Backtrack action attempts
+plus 1,600 context events** automatically in local storage. You can keep
+browsing after an incident and inspect the evidence later; no open console or
+running Codex session is needed. See [development event log](docs/diagnostic-log.md).
 
 The Phase 1 gesture proof of concept remains available. A Manifest V3 service
 worker now validates whether a newly opened tab has a still-existing,
@@ -245,6 +259,15 @@ the child one step before the intended opener return. Normal link navigation,
 later script-driven navigation after user input, and ambiguous states do not
 qualify. Decisions inspect passive history state without rewriting it.
 
+A later internal Back that is redirected to the exact page it started from is
+handled separately. Backtrack correlates one automatic internal-Back request
+with the next top-level browser commit. It accepts a loop boundary only when
+the commit is browser-labeled `forward_back` plus `server_redirect` or
+`client_redirect`, the exact address is unchanged, the attempted opaque entry
+still matches, the new Navigation API entry is `push`/`replace`, and no
+same-origin Back entry remains. The opener is still revalidated by the normal
+closure path. Losing any evidence becomes a no-op or another ordinary Back.
+
 These are child-closure decisions, not permission to disable ordinary Back.
 When closure is ineligible, the action layer can return `USE_BROWSER_HISTORY`:
 the content script requests `history.back()` without assuming that the
@@ -281,11 +304,15 @@ events but cannot alone prove that Backtrack suppressed browser navigation.
 
 ### Persistent diagnostic ring
 
-For an intermittent missed close, Backtrack also keeps the most recent 160
-meaningful gesture and action decisions in an on-device diagnostic ring. It
-survives a page, tab, extension-service-worker, or browser restart, and is
-overwritten from oldest to newest once it is full. This is a development aid,
-not telemetry: nothing is sent anywhere.
+The development build automatically retains the latest **400 action attempts**
+and **1,600 context events** in separate bounded groups. These include rejected
+actions, relevant gesture summaries, passive navigation state, browser
+commits/redirects, opener relationships, focus/close/move events, and runtime
+version/start markers. Repeated identical passive snapshots are omitted.
+Stored records survive page/tab closure and worker, extension, or browser
+restart. Each group overwrites its own oldest records when full; context noise
+cannot evict the 400 actions. No console or Codex session needs to remain open.
+This is a local development aid, not telemetry: nothing is sent anywhere.
 
 On any ordinary `http://` or `https://` page, choose **Backtrack Development**
 in DevTools' JavaScript context and run:
@@ -294,12 +321,23 @@ in DevTools' JavaScript context and run:
 await BacktrackGestureDebug.getPersistentDiagnosticLog()
 ```
 
-The important sequence is normally one `GESTURE_SESSION` followed by a
-`BACK_ACTION`. The session shows whether the movement became an action
-candidate (and which safety blocker stopped it); the action shows the resolved
-decision, for example `RETURNED_TO_OPENER`, `USE_INTERNAL_HISTORY`, or
-`NO_SPECIAL_ACTION` with its exact reason. `GESTURE_OWNERSHIP` explains whether
-the current tab was intentionally left to Brave's normal navigation.
+For later investigation, the report includes the entries, retention limits,
+coverage dates, storage status and automatically derived investigation hints:
+
+```js
+await BacktrackGestureDebug.getPersistentDiagnosticReport()
+```
+
+An early `BACK_ACTION` can precede its `GESTURE_SESSION` end, or close the page
+before that summary can be sent. `NAVIGATION_STATE`, `NAVIGATION_COMMIT` and
+`TAB_EVENT` show subsequent observable outcomes. `NAVIGATION_RESULT` reports
+whether the content script called ordinary Back, not whether traversal
+actually completed. `GESTURE_OWNERSHIP` explains browser-owned root input.
+The review flags missing closure evidence, slow action responses, action
+errors, redirected-Back loops, and repeated Back requests without observed
+progress as **hints, not proven bugs**. A reported loop may already have been
+recovered successfully. The review cannot infer your intent from a
+successful-looking action.
 
 Clear the ring after we have inspected an incident:
 
@@ -307,11 +345,13 @@ Clear the ring after we have inspected an incident:
 await BacktrackGestureDebug.clearPersistentDiagnosticLog()
 ```
 
-The ring keeps only a whitelisted, compact diagnostic schema: numeric tab and
-window IDs; gesture classification, direction, and rounded threshold values;
-and action/decision reason codes. It rejects URLs, page titles, page text, raw
-wheel events, arbitrary page data, and browser history. Ordinary vertical
-scrolling is not written to the persistent ring.
+With the developer user's explicit permission, version `0.6.5` adds website
+origins (scheme, host, port), opaque entry/document UUIDs, entry-baseline flags,
+history counts, redirect qualifiers and timing metadata. Credentials, URL
+paths/queries/fragments, page titles/text, cookies, form input, and raw wheel
+events are excluded. This is a bounded browsing-event trail for local
+development, not a product analytics feature. The production logging policy
+must be decided separately. See [the full contract](docs/diagnostic-log.md).
 
 ### Inspect opener validation in the background
 
@@ -461,8 +501,9 @@ await BacktrackGestureDebug.clearCalibration()
 ```
 
 Calibration stores only the direction and enabled/disabled state in local
-extension storage. The separate, bounded diagnostic ring above stores no
-address, page content, raw wheel events, or browser history. Automatic actions require computed root
+extension storage. The separate development event log retains origins and
+opaque navigation metadata, not full addresses, page content or raw wheel
+events. Automatic actions require computed root
 `overscroll-behavior-x: contain`; a failed containment check becomes a no-op.
 
 Clear the measurement buffer:
@@ -615,10 +656,10 @@ and its conservative tradeoffs are documented in
 
 | Access | Why needed? | Can it be avoided? | Theoretical data access |
 | --- | --- | --- | --- |
-| `storage` | `chrome.storage.session` keeps opaque child-entry and short gesture-cooldown state across service-worker suspension. `chrome.storage.local` keeps the user's explicit direction calibration and enabled/disabled choice plus a bounded, local diagnostic ring of 160 safe summaries. | Not safely for the current design. Losing an entry baseline or momentum claim must fail closed, the chosen direction must survive page reloads, and an intermittent issue needs evidence across tab closure. | The permission could also store arbitrary extension data. Backtrack stores only the documented diagnostic schema: numeric tab/window IDs, rounded gesture-threshold values, classification, and action/decision codes. It stores no URLs, titles, page content, raw wheel events, or browsing history. |
-| `webNavigation` | `onCreatedNavigationTarget` supplies exact source/child IDs when Brave omits `openerTabId`; top-level `onCommitted` metadata identifies guarded opening redirects. | Without it, missing opener relationships and redirect wrappers cannot be distinguished safely from page-side history alone. | The API can expose navigation events and URLs. Backtrack discards event URLs and retains only IDs, transition metadata and safety flags in session memory. No server is contacted. |
+| `storage` | `storage.session` keeps child-entry/cooldown state. `storage.local` keeps calibration and the development event log: 400 actions plus 1,600 context events. | Entry/cooldown state must survive worker suspension; deferred incident investigation needs persistence beyond tab closure. | The API could store arbitrary extension data. The development schema allows origins, opaque entry/document UUIDs, tab IDs, history counts, timings and reason codes. It excludes full addresses, titles, page content, credentials and raw input. These records are never used to reconstruct live closure eligibility. |
+| `webNavigation` | `onCreatedNavigationTarget` supplies exact source/child IDs when Brave omits `openerTabId`. Top-level `onCommitted` metadata identifies confirmed opening redirects and redirected-Back loops, and provides diagnostic context. | Without it, missing opener relationships, redirect wrappers and a browser-confirmed return loop cannot be distinguished safely using page-side history alone. | The API can expose navigation events and URLs. For loop detection, the pending source and committed destination are compared for exact equality only in volatile worker memory and are immediately discarded; no full address enters storage or diagnostics. The development log retains only the origin plus transition metadata. No server is contacted. |
 | No `tabs` permission | The background uses tab lifecycle events plus `chrome.tabs.get()`, `chrome.tabs.update()`, and `chrome.tabs.remove()` for IDs, state validation, activation, and exact child closure. These operations do not require the broad permission. | Already avoided. | Without `tabs`, the API does not expose privileged URL, title, or favicon fields to Backtrack. |
-| Automatic content script on `http://*/*` and `https://*/*` | Gesture and history changes must be observed early across ordinary websites. | An `activeTab` research build is possible but would require a toolbar action, service worker, and an extra step on every page. Reassess before production. | A content script could theoretically read or alter page DOM. Backtrack processes only event, geometry, scroll-context, and opaque navigation-entry data. It logs no URL and contacts no server. |
+| Automatic content script on `http://*/*` and `https://*/*` | Gesture and history changes must be observed early across ordinary websites. | An `activeTab` research build would need a toolbar action on every page. Reassess before production. | A content script could read or alter page DOM. Backtrack processes event, geometry, scroll-context and opaque navigation-entry data. The development log adds sender origins, not full page addresses or contents. No server is contacted. |
 
 Backtrack does not run on `brave://`, `chrome://`, the Chrome Web Store, or
 other protected browser pages. This also includes Chromium's internal
@@ -677,7 +718,7 @@ Subframes are included only when their own address matches `http://` or
 ## Deliberately not included yet
 
 - automatic tab action before explicit direction calibration;
-- a persistently stored tab tree or browser history;
+- restoration of a tab tree or live navigation state from persistent records;
 - an options page;
-- telemetry, server access, a persistent tab tree, or browsing-history
-  storage.
+- telemetry, server access, or a complete browsing-history archive. The bounded
+  local development event trail is explicitly documented above.

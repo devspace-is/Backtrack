@@ -237,6 +237,72 @@ test("an accepted automatic gesture passes the gate before acting", async () => 
   assert.equal(tabs.has(20), false);
 });
 
+test("an automatic internal Back is correlated before the page traverses", async () => {
+  const child = {
+    id: 20,
+    openerTabId: 10,
+    windowId: 2,
+    active: true,
+    pinned: false,
+    discarded: false,
+    incognito: false,
+    groupId: -1,
+  };
+  const opener = {
+    id: 10,
+    windowId: 2,
+    active: false,
+    pinned: false,
+    discarded: false,
+    incognito: false,
+    groupId: -1,
+  };
+  const tabsApi = {
+    async get(tabId) {
+      return structuredClone(tabId === 20 ? child : opener);
+    },
+    async update() { assert.fail("Internal Back must not activate a tab"); },
+    async remove() { assert.fail("Internal Back must not close a tab"); },
+  };
+  const tracker = {
+    async getValidatedOpener() {
+      return { openerTabId: 10, source: "TAB_OPENER_ID" };
+    },
+    async assess() {
+      return {
+        availability: NAVIGATION_AVAILABILITY.INTERNAL_BACK_AVAILABLE,
+        reason: "TRACKED_INTERNAL_ENTRY",
+      };
+    },
+  };
+  const attempts = [];
+  const listener = createNavigationMessageListener(
+    tabsApi,
+    tracker,
+    { async claim() { return { ok: true, reason: "ACCEPTED" }; } },
+    null,
+    { recordAttempt(value) { attempts.push(value); } },
+  );
+  const response = await new Promise(resolve => listener({
+    type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
+    snapshot: { currentEntryKey: "entry-b" },
+    gesture: { source: "AUTOMATIC", id: "gesture-2", observedAtMs: 20_000 },
+  }, {
+    tab: child,
+    frameId: 0,
+    documentId: "document-b",
+    url: "https://github.com/example/repository",
+  }, resolve));
+
+  assert.equal(response.action, "USE_INTERNAL_HISTORY");
+  assert.deepEqual(attempts, [{
+    tabId: 20,
+    documentId: "document-b",
+    entryKey: "entry-b",
+    url: "https://github.com/example/repository",
+  }]);
+});
+
 test("duplicate and unsupported automatic action requests fail closed", async (t) => {
   await t.test("deduplicated gesture", async () => {
     let tabApiUsed = false;

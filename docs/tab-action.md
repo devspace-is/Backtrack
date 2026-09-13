@@ -110,17 +110,23 @@ rejected by the background action.
 
 No `tabs` permission is requested. Chromium allows the extension to use
 `tabs.get()`, `tabs.update()`, and `tabs.remove()` without that broad permission.
-Backtrack reads only non-sensitive tab metadata needed for the decision and
-does not access or retain URLs, titles, favicons, or page content.
+The action layer reads tab metadata needed for the decision; it does not use
+URLs, titles, favicons, or page content. The separate developer-authorized
+event log retains website origins and opaque navigation metadata, but never
+full addresses, credentials or contents. It cannot authorize an action.
 
 The `webNavigation` permission supplies the exact `onCreatedNavigationTarget`
-relationship and, since `0.6.4`, top-level `onCommitted` metadata for guarded
-opening-redirect detection. Event URLs are discarded. Source/child tab IDs,
-opaque entry/document keys and safety flags remain in volatile session state;
-the redirect guard cannot create an opener relationship.
+relationship and top-level `onCommitted` metadata for guarded opening-redirect
+and redirected-Back-loop detection. Version `0.6.5` compares the pending source
+address with the next committed destination only in volatile worker memory,
+then discards both. Full addresses never enter storage or diagnostics.
+Source/child tab IDs, opaque entry/document keys and boolean safety flags may
+remain in volatile session state; neither redirect guard can create an opener
+relationship.
 
-The action uses no server, analytics, telemetry, persistent tab tree, or
-persistent browsing history.
+The action uses no server, analytics, telemetry or persistent tab tree. The
+bounded development log is documented in [`diagnostic-log.md`](diagnostic-log.md)
+and is never read by the action logic.
 
 ## Controlled manual test
 
