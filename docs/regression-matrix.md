@@ -104,6 +104,59 @@ is: navigate twice in a parent tab, open and gesture-close a child, then use
 two separate back gestures in the parent. Refresh pages that were open before
 the extension update before testing.
 
+## September 13, 2026: returning past an opening redirect
+
+Live inspection of version `0.6.3` found a child at its visible GitHub landing
+page classified as `USE_INTERNAL_HISTORY / TRACKED_INTERNAL_ENTRY`, despite
+same-origin `canGoBack: false`. The opener relationship was valid. The local
+diagnostic ring recorded an accepted Back request after approximately 234 ms;
+this instance was not a missed gesture or a missing opener.
+
+One ordinary browser Back exposed a redirect wrapper from the source site.
+Forward restored the GitHub page. No challenge was solved and no download was
+performed. The wrapper address and any challenge parameters are deliberately
+not retained here. This establishes the unexpected predecessor; the original
+creation-time browser transition qualifier was not captured in that old build.
+
+Version `0.6.4` handles the guarded `client_redirect` case and adds passive
+snapshot/document consistency checks. Automated tests cover same- and
+cross-origin redirect landings, two subsequent internal steps, return to the
+landing, and exact opener focus/child closure. Negative tests retain ordinary
+navigation and redirects after trusted input, reject stale or subframe data,
+and prevent closure when the opener disappears. Worker restart, multi-hop
+opening redirects and full-document/back-forward-cache return are included.
+
+A replay of the wrapper → landing → further page → landing sequence against
+the previous committed tracker returned `INTERNAL_BACK_AVAILABLE`; the updated
+tracker returned `AT_ENTRY_POINT / TRACKED_REDIRECT_ENTRY_POINT` when supplied
+with the confirmed, unattended client-redirect metadata. This is controlled
+before/after evidence, not a capture of the real site's initial transition.
+
+Version `0.6.4` navigation-fix subset: **173 passed, 0 failed**. These tests
+cover the redirect baseline, document/interaction guards and the existing
+gesture, opener, history and failure behavior.
+
+The change has not yet been verified with a physical swipe in the updated
+Brave extension. An automated pass is not confirmation that the inspected
+real-world wrapper emits every signal required by the conservative guard.
+
+Retest after reloading Backtrack `0.6.4`; existing children cannot be adopted
+retroactively. Serve `docs` as described in the README, then:
+
+1. Open `navigation-fixture.html` and select **Open child through automatic
+   redirect**. Leave the intermediate page untouched.
+2. On the landing page, select **Add SPA step** twice.
+3. Swipe Back once per step: both gestures must remain in the child.
+4. Swipe once more at the landing: only the child should close; the fixture
+   opener should become active. The action log should report
+   `TRACKED_REDIRECT_ENTRY_POINT` as the decision reason.
+5. Repeat using **Full-document navigation** instead of SPA steps.
+6. Repeat on the affected real website with a freshly link-opened child.
+7. For the safety comparison, click the intermediate fixture before its
+   redirect. It must remain the original entry, not be skipped by child closure.
+
+Do not mark any physical case passed until it has actually been observed.
+
 ## Physical Brave/macOS matrix
 
 ### September 5, 2026: root-tab responsiveness follow-up

@@ -58,6 +58,19 @@ chrome.webNavigation.onCreatedNavigationTarget.addListener(
   createNavigationTargetListener(chrome.tabs, navigationTracker),
 );
 
+chrome.webNavigation.onCommitted.addListener((details) => {
+  // Project only browser metadata; do not retain the event's URL.
+  void navigationTracker.recordDocumentCommit({
+    tabId: details.tabId,
+    frameId: details.frameId,
+    documentId: details.documentId,
+    documentLifecycle: details.documentLifecycle,
+    transitionType: details.transitionType,
+    transitionQualifiers: details.transitionQualifiers,
+  }).catch(() => undefined);
+});
+
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   void navigationTracker.remove(tabId);
   void gestureActionGate.remove(tabId);

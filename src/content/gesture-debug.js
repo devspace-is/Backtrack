@@ -9,7 +9,7 @@
     return;
   }
 
-  const VERSION = "0.6.3";
+  const VERSION = "0.6.4";
   const LOG_PREFIX = "[Backtrack:Gesture]";
   const SESSION_SUMMARY_PREFIX = "[Backtrack:Gesture:SessionJSON]";
   const THRESHOLD_SUMMARY_PREFIX = "[Backtrack:Gesture:ThresholdJSON]";

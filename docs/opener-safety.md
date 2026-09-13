@@ -101,11 +101,17 @@ documents why that component uses only `storage.session`. Version `0.6.3` also
 uses `storage.local` for the user-selected direction, enabled state, and the
 bounded privacy-filtered diagnostic ring described above.
 
-Version `0.5.1` adds the `webNavigation` permission solely for
+Version `0.5.1` originally added the `webNavigation` permission for
 `onCreatedNavigationTarget`. The event can theoretically expose the URL being
 opened, but Backtrack neither logs nor stores that field. It retains only the
 numeric source and child tab IDs in `storage.session`. This avoids a much less
 reliable and more dangerous guess based on the active tab or tab position.
+
+Since `0.6.4`, the separate history component also uses top-level `onCommitted`
+metadata to recognize guarded automatic opening redirects. It discards event
+URLs and retains only opaque document identity and safety flags in session
+state; it cannot invent or replace an opener relationship. See
+[`internal-history.md`](internal-history.md).
 
 The background process is registered as a module service worker in the
 manifest. Its event listeners are registered immediately at load time, as

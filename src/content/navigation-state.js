@@ -11,6 +11,7 @@
   const LOG_PREFIX = "[Backtrack:Navigation]";
   const MESSAGE_TYPES = Object.freeze({
     NAVIGATION_SNAPSHOT: "BACKTRACK_NAVIGATION_SNAPSHOT",
+    NAVIGATION_INTERACTION: "BACKTRACK_NAVIGATION_INTERACTION",
     GET_BACK_DECISION: "BACKTRACK_GET_BACK_DECISION",
     PERFORM_CONFIRMED_BACK_ACTION: "BACKTRACK_PERFORM_CONFIRMED_BACK_ACTION",
   });
@@ -30,6 +31,7 @@
 
   let lastSnapshot = null;
   let sequence = 0;
+  let interactionReported = false;
 
   function capture(trigger, navigationType = null) {
     lastSnapshot = snapshotApi.readSnapshot({
@@ -39,6 +41,8 @@
       trigger,
       navigationType,
     });
+    lastSnapshot.hasUserActivation = interactionReported ||
+      globalThis.navigator?.userActivation?.hasBeenActive !== false;
     return lastSnapshot;
   }
 
@@ -85,6 +89,7 @@
   }
 
   async function sendBackAction(trigger, gesture, navigateInternal) {
+    reportInteraction();
     const snapshot = capture(trigger);
     const response = await chrome.runtime.sendMessage({
       type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
@@ -112,6 +117,12 @@
       internalNavigationRequested,
     });
     return { ...response, internalNavigationRequested };
+  }
+
+  function reportInteraction(event = null) {
+    if (interactionReported || (event && !event.isTrusted)) return;
+    interactionReported = true;
+    sendMessage({ type: MESSAGE_TYPES.NAVIGATION_INTERACTION });
   }
 
   async function performConfirmedBackAction(trigger = "manual-confirmed-back") {
@@ -161,6 +172,11 @@
   window.addEventListener("pageshow", () => publish("pageshow"), {
     capture: true,
   });
+  // Wheel input does not always set sticky user activation in Chromium.
+  // Once the user uses the child, automatic redirects cannot redefine entry.
+  for (const eventType of ["pointerdown", "click", "keydown", "touchstart", "wheel"]) {
+    window.addEventListener(eventType, reportInteraction, { capture: true, passive: true });
+  }
 
   publish("document-start");
 })();

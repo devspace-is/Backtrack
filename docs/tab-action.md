@@ -113,10 +113,11 @@ No `tabs` permission is requested. Chromium allows the extension to use
 Backtrack reads only non-sensitive tab metadata needed for the decision and
 does not access or retain URLs, titles, favicons, or page content.
 
-The `webNavigation` permission is used only for the exact
-`onCreatedNavigationTarget` relationship. Although that event includes a URL,
-Backtrack ignores it and stores only the source and child tab IDs in volatile
-session storage.
+The `webNavigation` permission supplies the exact `onCreatedNavigationTarget`
+relationship and, since `0.6.4`, top-level `onCommitted` metadata for guarded
+opening-redirect detection. Event URLs are discarded. Source/child tab IDs,
+opaque entry/document keys and safety flags remain in volatile session state;
+the redirect guard cannot create an opener relationship.
 
 The action uses no server, analytics, telemetry, persistent tab tree, or
 persistent browsing history.

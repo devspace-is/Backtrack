@@ -8,8 +8,8 @@ import { NAVIGATION_AVAILABILITY } from "../src/background/navigation-tracker.js
 test("navigation snapshots are associated only with the sender tab", async () => {
   let recorded = null;
   const tracker = {
-    async recordSnapshot(tabId, snapshot) {
-      recorded = { tabId, snapshot };
+    async recordSnapshot(tabId, snapshot, documentId) {
+      recorded = { tabId, snapshot, documentId };
       return { tabId };
     },
   };
@@ -20,8 +20,9 @@ test("navigation snapshots are associated only with the sender tab", async () =>
       {
         type: MESSAGE_TYPES.NAVIGATION_SNAPSHOT,
         snapshot: { currentEntryKey: "entry-a" },
+        documentId: "untrusted-message-document",
       },
-      { tab: { id: 20 } },
+      { tab: { id: 20 }, frameId: 0, documentId: "browser-document" },
       resolve,
     );
     assert.equal(handled, true);
@@ -30,8 +31,26 @@ test("navigation snapshots are associated only with the sender tab", async () =>
   assert.deepEqual(recorded, {
     tabId: 20,
     snapshot: { currentEntryKey: "entry-a" },
+    documentId: "browser-document",
   });
   assert.deepEqual(response, { ok: true });
+});
+
+test("only the main frame's actual document can report interaction", async () => {
+  const recorded = [];
+  const listener = createNavigationMessageListener({}, {
+    async recordInteraction(...args) { recorded.push(args); return {}; },
+    async recordSnapshot() { assert.fail("Subframe snapshots must be rejected"); },
+  });
+  const request = (type, frameId) => new Promise(resolve => listener(
+    { type, tabId: 99, documentId: "spoofed" },
+    { tab: { id: 20 }, frameId, documentId: "actual" }, resolve,
+  ));
+  assert.deepEqual(await request(MESSAGE_TYPES.NAVIGATION_INTERACTION, 0), { ok: true });
+  assert.deepEqual(recorded, [[20, "actual"]]);
+  assert.deepEqual(await request(MESSAGE_TYPES.NAVIGATION_INTERACTION, 1), { ok: false });
+  assert.deepEqual(await request(MESSAGE_TYPES.NAVIGATION_SNAPSHOT, 1), { ok: false });
+  assert.equal(recorded.length, 1);
 });
 
 test("unrelated messages remain available to other listeners", () => {

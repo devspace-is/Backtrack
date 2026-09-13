@@ -23,6 +23,14 @@ planning are maintained in English.
 
 **Phase 2, four bounded components complete.**
 
+Version `0.6.4` adds conservative handling for automatic opening redirects.
+A child may first load a redirect wrapper before reaching the linked page.
+Browser-confirmed, unattended client redirects can now establish that landing
+page as the effective child entry. Subsequent deliberate navigation remains
+internal history. Automated coverage passes; the updated real-trackpad
+sequence still needs confirmation in Brave after reloading the extension and
+opening a fresh child tab. See the [regression matrix](docs/regression-matrix.md).
+
 The Phase 1 gesture proof of concept remains available. A Manifest V3 service
 worker now validates whether a newly opened tab has a still-existing,
 unambiguous opener in the same browser window. It prefers Chromium's
@@ -229,6 +237,13 @@ missing or contradictory evidence
 
 `history.length` is logged for diagnostics only and is never used as the sole
 decision signal. See [internal-history.md](docs/internal-history.md).
+
+An initial redirect may move the captured entry only when the browser reports
+a client redirect from the known entry and no user interaction has been
+observed in that opening chain. This prevents a redirect wrapper from trapping
+the child one step before the intended opener return. Normal link navigation,
+later script-driven navigation after user input, and ambiguous states do not
+qualify. Decisions inspect passive history state without rewriting it.
 
 These are child-closure decisions, not permission to disable ordinary Back.
 When closure is ineligible, the action layer can return `USE_BROWSER_HISTORY`:
@@ -601,7 +616,7 @@ and its conservative tradeoffs are documented in
 | Access | Why needed? | Can it be avoided? | Theoretical data access |
 | --- | --- | --- | --- |
 | `storage` | `chrome.storage.session` keeps opaque child-entry and short gesture-cooldown state across service-worker suspension. `chrome.storage.local` keeps the user's explicit direction calibration and enabled/disabled choice plus a bounded, local diagnostic ring of 160 safe summaries. | Not safely for the current design. Losing an entry baseline or momentum claim must fail closed, the chosen direction must survive page reloads, and an intermittent issue needs evidence across tab closure. | The permission could also store arbitrary extension data. Backtrack stores only the documented diagnostic schema: numeric tab/window IDs, rounded gesture-threshold values, classification, and action/decision codes. It stores no URLs, titles, page content, raw wheel events, or browsing history. |
-| `webNavigation` | `onCreatedNavigationTarget` supplies the exact source-tab and child-tab IDs when Brave omits `openerTabId` for a link-created tab. Backtrack ignores the event URL and keeps only the two numeric IDs in session memory. | Avoiding it caused real link-created tabs to fail with `NO_OPENER`. Inferring the source from the active tab or tab position would be unsafe. | The API can theoretically expose navigation events and their URLs. Backtrack subscribes only to the new-target event, does not log or store its URL, and contacts no server. |
+| `webNavigation` | `onCreatedNavigationTarget` supplies exact source/child IDs when Brave omits `openerTabId`; top-level `onCommitted` metadata identifies guarded opening redirects. | Without it, missing opener relationships and redirect wrappers cannot be distinguished safely from page-side history alone. | The API can expose navigation events and URLs. Backtrack discards event URLs and retains only IDs, transition metadata and safety flags in session memory. No server is contacted. |
 | No `tabs` permission | The background uses tab lifecycle events plus `chrome.tabs.get()`, `chrome.tabs.update()`, and `chrome.tabs.remove()` for IDs, state validation, activation, and exact child closure. These operations do not require the broad permission. | Already avoided. | Without `tabs`, the API does not expose privileged URL, title, or favicon fields to Backtrack. |
 | Automatic content script on `http://*/*` and `https://*/*` | Gesture and history changes must be observed early across ordinary websites. | An `activeTab` research build is possible but would require a toolbar action, service worker, and an extra step on every page. Reassess before production. | A content script could theoretically read or alter page DOM. Backtrack processes only event, geometry, scroll-context, and opaque navigation-entry data. It logs no URL and contacts no server. |
 

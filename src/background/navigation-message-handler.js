@@ -31,8 +31,23 @@ export function createNavigationMessageListener(
 
   return (message, sender, sendResponse) => {
     if (message?.type === MESSAGE_TYPES.NAVIGATION_SNAPSHOT) {
+      if (sender?.frameId !== undefined && sender.frameId !== 0) {
+        sendResponse({ ok: false });
+        return false;
+      }
       navigationTracker
-        .recordSnapshot(sender?.tab?.id, message.snapshot)
+        .recordSnapshot(sender?.tab?.id, message.snapshot, sender?.documentId)
+        .then((state) => sendResponse({ ok: state !== null }))
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+    }
+
+    if (message?.type === MESSAGE_TYPES.NAVIGATION_INTERACTION) {
+      if (sender?.frameId !== 0) {
+        sendResponse({ ok: false });
+        return false;
+      }
+      navigationTracker.recordInteraction(sender?.tab?.id, sender?.documentId)
         .then((state) => sendResponse({ ok: state !== null }))
         .catch(() => sendResponse({ ok: false }));
       return true;

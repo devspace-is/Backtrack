@@ -61,11 +61,13 @@ test("internal history always wins over opener behavior", async () => {
 });
 
 test("the entry point becomes eligible but performs no tab action", async () => {
+  const tracker = trackerWith(NAVIGATION_AVAILABILITY.AT_ENTRY_POINT);
+  tracker.recordSnapshot = () => assert.fail("A decision must not mutate passive history tracking");
   const result = await evaluateBackDecision(
     currentTab(),
     { currentEntryKey: "entry-a" },
     tabsApi(opener),
-    trackerWith(NAVIGATION_AVAILABILITY.AT_ENTRY_POINT),
+    tracker,
   );
 
   assert.equal(result.decision, BACK_DECISIONS.RETURN_TO_OPENER_ELIGIBLE);

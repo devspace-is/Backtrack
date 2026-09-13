@@ -18,6 +18,7 @@ export const OPENER_RELATIONSHIP_SOURCES = Object.freeze({
 export const NAVIGATION_REASONS = Object.freeze({
   TRACKED_INTERNAL_ENTRY: "TRACKED_INTERNAL_ENTRY",
   TRACKED_ENTRY_POINT: "TRACKED_ENTRY_POINT",
+  TRACKED_REDIRECT_ENTRY_POINT: "TRACKED_REDIRECT_ENTRY_POINT",
   NOT_TRACKED: "NOT_TRACKED",
   AWAITING_ENTRY: "AWAITING_ENTRY",
   OPENER_NOT_VALIDATED: "OPENER_NOT_VALIDATED",
@@ -28,6 +29,7 @@ export const NAVIGATION_REASONS = Object.freeze({
   CONTRADICTORY_BROWSER_SIGNAL: "CONTRADICTORY_BROWSER_SIGNAL",
   NAVIGATION_IN_PROGRESS: "NAVIGATION_IN_PROGRESS",
   INVALID_TAB: "INVALID_TAB",
+  LIVE_ENTRY_MISMATCH: "LIVE_ENTRY_MISMATCH",
 });
 
 const NAVIGATION_TYPES = new Set(["push", "replace", "reload", "traverse"]);
@@ -103,6 +105,12 @@ export function createCandidateState(tab, relationship = null) {
     sameOriginCanGoBack: null,
     transitionActive: false,
     uncertaintyReason: null,
+    documentId: null,
+    documentHasUserActivation: null,
+    initialRedirectChainOpen: true,
+    pendingRedirectDocumentId: null,
+    baselineAllowsSameOriginBack: false,
+    baselineFromInitialRedirect: false,
   };
 }
 
@@ -158,6 +166,7 @@ export function applyNavigationSnapshot(state, snapshot) {
     return {
       ...common,
       currentEntryKey: entryKey,
+      initialRedirectChainOpen: false,
     };
   }
 
@@ -213,6 +222,24 @@ export function assessTrackedNavigation(state, liveSnapshot = null) {
     };
   }
 
+  if (state.pendingRedirectDocumentId) {
+    return {
+      availability: NAVIGATION_AVAILABILITY.UNKNOWN,
+      reason: NAVIGATION_REASONS.NAVIGATION_IN_PROGRESS,
+    };
+  }
+
+  // A delayed request must not overwrite a newer passive navigation snapshot.
+  if (
+    liveSnapshot?.currentEntryKey &&
+    liveSnapshot.currentEntryKey !== state.currentEntryKey
+  ) {
+    return {
+      availability: NAVIGATION_AVAILABILITY.UNKNOWN,
+      reason: NAVIGATION_REASONS.LIVE_ENTRY_MISMATCH,
+    };
+  }
+
   if (!state.baselineEntryKey || !state.currentEntryKey) {
     return {
       availability: NAVIGATION_AVAILABILITY.UNKNOWN,
@@ -227,7 +254,10 @@ export function assessTrackedNavigation(state, liveSnapshot = null) {
     };
   }
 
-  if (state.sameOriginCanGoBack === true) {
+  if (
+    (state.sameOriginCanGoBack === true || liveSnapshot?.sameOriginCanGoBack === true) &&
+    !state.baselineAllowsSameOriginBack
+  ) {
     return {
       availability: NAVIGATION_AVAILABILITY.UNKNOWN,
       reason: NAVIGATION_REASONS.CONTRADICTORY_BROWSER_SIGNAL,
@@ -236,7 +266,9 @@ export function assessTrackedNavigation(state, liveSnapshot = null) {
 
   return {
     availability: NAVIGATION_AVAILABILITY.AT_ENTRY_POINT,
-    reason: NAVIGATION_REASONS.TRACKED_ENTRY_POINT,
+    reason: state.baselineFromInitialRedirect
+      ? NAVIGATION_REASONS.TRACKED_REDIRECT_ENTRY_POINT
+      : NAVIGATION_REASONS.TRACKED_ENTRY_POINT,
   };
 }
 
@@ -331,7 +363,63 @@ export class NavigationTracker {
     });
   }
 
-  recordSnapshot(tabId, snapshot) {
+  recordDocumentCommit({
+    tabId, frameId, documentId, documentLifecycle, transitionType, transitionQualifiers,
+  }) {
+    const safeTabId = usableId(tabId);
+    const safeDocumentId = usableEntryKey(documentId);
+    if (
+      safeTabId === null || frameId !== 0 ||
+      safeDocumentId === null || documentLifecycle !== "active"
+    ) {
+      return Promise.resolve(null);
+    }
+    return this.#enqueue(safeTabId, async () => {
+      const state = await this.#read(safeTabId);
+      if (!state) return null;
+      // The first commit can reach us after its document-start snapshot.
+      if (state.documentId === safeDocumentId) return state;
+      const qualifiers = Array.isArray(transitionQualifiers)
+        ? transitionQualifiers : [];
+      const initialRedirect =
+        state.initialRedirectChainOpen === true &&
+        assessTrackedNavigation(state).availability === NAVIGATION_AVAILABILITY.AT_ENTRY_POINT &&
+        state.currentEntryKey === state.baselineEntryKey &&
+        state.documentId !== null &&
+        state.documentHasUserActivation === false &&
+        transitionType === "link" &&
+        qualifiers.includes("client_redirect") &&
+        !qualifiers.includes("forward_back") &&
+        !qualifiers.includes("from_address_bar");
+      return this.#write(safeTabId, {
+        ...state,
+        documentId: safeDocumentId,
+        documentHasUserActivation: null,
+        pendingRedirectDocumentId: initialRedirect ? safeDocumentId : null,
+        initialRedirectChainOpen: initialRedirect || state.baselineEntryKey === null,
+        revision: state.revision + 1,
+      });
+    });
+  }
+
+  recordInteraction(tabId, documentId) {
+    const safeTabId = usableId(tabId);
+    if (safeTabId === null || usableEntryKey(documentId) === null) {
+      return Promise.resolve(null);
+    }
+    return this.#enqueue(safeTabId, async () => {
+      const state = await this.#read(safeTabId);
+      if (!state || state.documentId !== documentId) return null;
+      return this.#write(safeTabId, {
+        ...state,
+        documentHasUserActivation: true,
+        initialRedirectChainOpen: false,
+        revision: state.revision + 1,
+      });
+    });
+  }
+
+  recordSnapshot(tabId, snapshot, documentId = null) {
     const safeTabId = usableId(tabId);
     if (safeTabId === null) {
       return Promise.resolve(null);
@@ -339,7 +427,32 @@ export class NavigationTracker {
 
     return this.#enqueue(safeTabId, async () => {
       const state = await this.#read(safeTabId);
-      const next = applyNavigationSnapshot(state, snapshot);
+      if (state?.documentId && state.documentId !== documentId) return state;
+      let next = applyNavigationSnapshot(state, snapshot);
+      if (
+        state?.pendingRedirectDocumentId &&
+        documentId === state.pendingRedirectDocumentId &&
+        snapshot?.apiAvailable === true && usableEntryKey(snapshot.currentEntryKey) &&
+        ["push", "replace"].includes(snapshot.navigationType)
+      ) {
+        // Only a browser-confirmed startup redirect may move the entry point.
+        // No URL, history length, timeout, or missing canGoBack is used as proof.
+        next = {
+          ...next,
+          baselineEntryKey: snapshot.currentEntryKey,
+          currentEntryKey: snapshot.currentEntryKey,
+          pendingRedirectDocumentId: null,
+          initialRedirectChainOpen: state.initialRedirectChainOpen,
+          baselineAllowsSameOriginBack: snapshot.sameOriginCanGoBack === true,
+          baselineFromInitialRedirect: true,
+        };
+      }
+      if (next && usableEntryKey(documentId)) {
+        next.documentId = documentId;
+        next.documentHasUserActivation =
+          state.documentHasUserActivation === true || snapshot?.hasUserActivation !== false;
+        if (next.documentHasUserActivation) next.initialRedirectChainOpen = false;
+      }
       return next ? this.#write(safeTabId, next) : null;
     });
   }

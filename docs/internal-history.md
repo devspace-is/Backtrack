@@ -1,6 +1,6 @@
 # Internal Back History
 
-Status: September 5, 2026
+Status: September 13, 2026
 
 ## Purpose of this step
 
@@ -80,7 +80,47 @@ meaningful cross-origin page precedes the current page in the tab history.
 Backtrack uses the opaque key captured across document changes as its primary
 signal. If the browser simultaneously reports `canGoBack: true` at the tracked
 entry point, the signals contradict each other. Backtrack then returns
-`NO_SPECIAL_ACTION`.
+`NO_SPECIAL_ACTION`, except for a same-origin predecessor already proven to
+belong to the automatic opening redirect chain described below.
+
+## Automatic opening redirects (0.6.4)
+
+A link-created tab can load a wrapper before reaching the intended landing
+page. Keeping the wrapper as the baseline leaves the landing page classified
+as internal history, even after the user has returned from later pages.
+
+The entry may advance to the landing page only with all of this evidence:
+
+- The child and its opener were already tracked and validated.
+- The current entry is the known baseline and its opening chain is still open.
+- A top-level, active-document `webNavigation.onCommitted` event reports type
+  `link` with qualifier `client_redirect`, not `forward_back` or
+  `from_address_bar`.
+- The source document has no reported user activation or trusted input.
+  Pointer, click, key, touch, wheel, and confirmed Back input freeze the chain.
+- A passive Navigation API snapshot with type `push` or `replace` arrives
+  from the exact destination document identified by the browser.
+
+Chrome documents `client_redirect` as JavaScript or meta-refresh redirection;
+this signal alone is insufficient, hence the additional entry and interaction
+guards. See the [Web Navigation API reference](https://developer.chrome.com/docs/extensions/reference/api/webNavigation).
+
+While the destination snapshot is pending, closure is blocked. An opaque
+`sender.documentId` binds snapshots to the current committed document; late
+messages from a previous page cannot overwrite it. Decision/action queries
+never rewrite the passive tracker. A live entry-key mismatch blocks closure
+until the passive state catches up.
+
+Unattended opening redirects can repeat. The first trusted interaction or
+ordinary history step ends the chain; later redirects cannot reset the entry.
+Returning through full-document history or the back-forward cache preserves
+the landing baseline. A same-origin redirect predecessor may make
+`canGoBack` true at that baseline; this narrow, recorded exception does not
+apply to ordinary child entries. Missing or ambiguous evidence keeps the
+original entry and never authorizes an inferred close.
+
+This is not a URL-based redirect detector and uses no elapsed-time heuristic.
+No site-specific rules, redirect URL list, or persistent history is stored.
 
 ## Full pages and single-page applications
 
@@ -110,8 +150,8 @@ This session storage:
 - is cleared when the extension is disabled, reloaded, or updated, and when
   the browser restarts;
 - is not exposed directly to webpage content scripts by default;
-- stores only tab IDs, the opener tab ID, opaque entry keys, and a few status
-  values for Backtrack.
+- stores only tab IDs, the opener tab ID, opaque entry/document keys, and a few
+  status values for Backtrack, including the opening-chain safety flags.
 
 The permission could theoretically also allow persistent extension storage.
 The history component itself calls only `storage.session`; since version
@@ -121,11 +161,12 @@ events, or browser-history entries. Without session storage, the entry point
 would become unknown after a routine background-process restart. Inventing a
 new baseline would be more dangerous than keeping this small volatile state.
 
-Version `0.5.1` uses the `webNavigation` permission only for
-`onCreatedNavigationTarget`, which supplies an exact source-to-child tab
-relationship when `openerTabId` is missing. Internal-history depth still comes
-only from the page-side Navigation API. Backtrack ignores the navigation event's
-URL and stores only numeric tab IDs plus opaque entry keys in session memory.
+Version `0.5.1` added `webNavigation.onCreatedNavigationTarget` for exact
+source-to-child relationships when `openerTabId` is missing. Version `0.6.4`
+also observes top-level `onCommitted` metadata for the redirect guard above.
+No new permission is added. Internal-history positions still come from the
+page-side Navigation API. Event URLs are discarded before tracker processing;
+only tab IDs, opaque entry/document keys and safety flags enter session state.
 
 ## Safe behavior when evidence is missing
 

@@ -47,8 +47,7 @@ export async function evaluateBackDecision(
     };
   }
 
-  await navigationTracker.recordSnapshot(currentTab.id, liveSnapshot);
-  const navigation = await navigationTracker.assess(currentTab.id, liveSnapshot);
+  const navigation = trackedBeforeRequest;
 
   let decision = BACK_DECISIONS.NO_SPECIAL_ACTION;
   if (
