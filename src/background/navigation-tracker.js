@@ -486,9 +486,11 @@ export class NavigationTracker {
         snapshot?.apiAvailable === true &&
         usableEntryKey(snapshot.currentEntryKey)
       ) {
+        // Brave can report the already-confirmed redirected Back as traverse.
+        // This does not authorize ordinary traversal without loop evidence.
         const confirmedLoopEntry =
           snapshot.sameOriginCanGoBack === false &&
-          ["push", "replace"].includes(snapshot.navigationType);
+          ["push", "replace", "traverse"].includes(snapshot.navigationType);
         next = {
           ...next,
           pendingBackRedirectLoopDocumentId: null,

@@ -46,7 +46,9 @@ const snapshot = (entry, navigationType, hasUserActivation = true) => ({
   hasUserActivation,
 });
 
-test("the real worker recovers a redirected-Back loop on the next action", async () => {
+async function assertWorkerRecovery(t, navigationType) {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
   const opener = {
     id: 10, windowId: 1, active: false, pinned: false, discarded: false,
     incognito: false, groupId: -1,
@@ -59,7 +61,7 @@ test("the real worker recovers a redirected-Back loop on the next action", async
   const chrome = {
     storage: { session: storage(), local: storage() },
     runtime: {
-      getManifest: () => ({ version: "0.6.5" }),
+      getManifest: () => ({ version: "0.6.6" }),
       onMessage: event(), onStartup: event(), onInstalled: event(),
     },
     tabs: {
@@ -110,7 +112,7 @@ test("the real worker recovers a redirected-Back loop on the next action", async
   });
 
   try {
-    await import("../src/background/service-worker.js");
+    await import(`../src/background/service-worker.js?loop=${navigationType}`);
     chrome.tabs.onCreated.fire(child);
     await settle();
     await settle();
@@ -150,7 +152,7 @@ test("the real worker recovers a redirected-Back loop on the next action", async
       "forward_back",
     ]);
     await settle();
-    const bouncedSnapshot = snapshot(ids.bouncedGithubEntry, "push", false);
+    const bouncedSnapshot = snapshot(ids.bouncedGithubEntry, navigationType);
     await send({
       type: MESSAGE_TYPES.NAVIGATION_SNAPSHOT,
       snapshot: bouncedSnapshot,
@@ -164,15 +166,60 @@ test("the real worker recovers a redirected-Back loop on the next action", async
       entry.navigation.backRedirectLoopPending === true,
     ));
 
+    // The real incident then alternated replace/traverse without changing entry.
+    for (const type of ["replace", navigationType, "replace", navigationType]) {
+      await send({
+        type: MESSAGE_TYPES.NAVIGATION_SNAPSHOT,
+        snapshot: snapshot(ids.bouncedGithubEntry, type),
+      }, sender(ids.bouncedGithub, githubUrl));
+    }
+
+    now += 1622;
+    const tooSoon = await send({
+      type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
+      snapshot: bouncedSnapshot,
+      gesture: {
+        source: "AUTOMATIC", id: "rapid-follow-up", observedAtMs: now,
+      },
+    }, sender(ids.bouncedGithub, githubUrl));
+    assert.equal(tooSoon.reason, "GESTURE_DEDUPLICATED");
+    assert.equal(tooSoon.gestureGate.reason, "COOLDOWN_ACTIVE");
+    assert.equal(tooSoon.gestureGate.retryAfterMs, 178);
+    assert.equal(tabs.has(20), true);
+    assert.equal(tabs.get(10).active, false);
+
+    now += 1891;
     const recovered = await send({
       type: MESSAGE_TYPES.PERFORM_CONFIRMED_BACK_ACTION,
       snapshot: bouncedSnapshot,
-      gesture: { source: "MANUAL_DEVELOPMENT" },
+      gesture: {
+        source: "AUTOMATIC", id: "next-deliberate-gesture", observedAtMs: now,
+      },
     }, sender(ids.bouncedGithub, githubUrl));
     assert.equal(recovered.action, "RETURNED_TO_OPENER");
+    assert.equal(recovered.decision.reason, "TRACKED_BACK_REDIRECT_LOOP_ENTRY_POINT");
     assert.equal(tabs.has(20), false);
     assert.equal(tabs.get(10).active, true);
+
+    const report = await send({ type: MESSAGE_TYPES.GET_DIAGNOSTIC_REPORT }, {});
+    assert.equal(report.ok, true);
+    assert.ok(report.entries.some(entry =>
+      entry.kind === "NAVIGATION_STATE" &&
+      entry.navigation.entryKey === ids.bouncedGithubEntry &&
+      entry.navigation.backRedirectLoopPending === false &&
+      entry.navigation.backRedirectLoopEntry === true,
+    ));
+    assert.ok(report.entries.some(entry =>
+      entry.kind === "BACK_ACTION" && entry.source === "AUTOMATIC" &&
+      entry.action === "RETURNED_TO_OPENER" &&
+      entry.decisionReason === "TRACKED_BACK_REDIRECT_LOOP_ENTRY_POINT",
+    ));
   } finally {
     delete globalThis.chrome;
   }
-});
+}
+
+for (const navigationType of ["push", "replace", "traverse"]) {
+  test(`the real worker recovers a redirected-Back ${navigationType} loop after the cooldown`,
+    async (t) => assertWorkerRecovery(t, navigationType));
+}

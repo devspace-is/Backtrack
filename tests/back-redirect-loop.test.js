@@ -276,6 +276,98 @@ test("loop evidence cannot skip a remaining same-origin entry", async () => {
   );
 });
 
+test("a confirmed loop survives traverse, replace and repeated snapshots", async () => {
+  const { storage, tracker, child, tabs, tabsApi, closed } = await trackedChild();
+  await tracker.recordDocumentCommit(commit("document-c", {
+    transitionQualifiers: ["server_redirect", "forward_back"],
+    backRedirectLoop: true,
+    backAttemptEntryKey: "entry-b",
+  }));
+
+  // Brave's observed sequence starts with traverse, not a newly pushed entry.
+  for (const navigationType of ["traverse", "replace", "traverse", "replace"]) {
+    const current = snapshot("entry-c", navigationType);
+    const state = await tracker.recordSnapshot(20, current, "document-c");
+    assert.equal(state.pendingBackRedirectLoopDocumentId, null);
+    assert.equal(state.backRedirectLoopEntryKey, "entry-c");
+    assert.equal(
+      (await tracker.assess(20, current)).reason,
+      NAVIGATION_REASONS.TRACKED_BACK_REDIRECT_LOOP_ENTRY_POINT,
+    );
+  }
+
+  const result = await performConfirmedBackAction(
+    child, snapshot("entry-c", "traverse"), tabsApi, new NavigationTracker(storage),
+  );
+  assert.equal(result.action, "RETURNED_TO_OPENER");
+  assert.deepEqual(closed, [20]);
+  assert.equal(tabs.get(10).active, true);
+});
+
+test("traverse snapshots cannot authorize closure without complete loop evidence", async (t) => {
+  for (const [name, commitOverrides, snapshotOverrides] of [
+    ["ordinary traversal", { backRedirectLoop: false }, {}],
+    ["no redirect qualifier", { transitionQualifiers: ["forward_back"] }, {}],
+    ["no history qualifier", { transitionQualifiers: ["server_redirect"] }, {}],
+    ["different attempted entry", { backAttemptEntryKey: "unrelated-entry" }, {}],
+    ["remaining same-origin history", {}, { sameOriginCanGoBack: true }],
+    ["unknown same-origin history", {}, { sameOriginCanGoBack: null }],
+    ["unknown navigation type", {}, { navigationType: null }],
+    ["reload instead of traversal", {}, { navigationType: "reload" }],
+  ]) {
+    await t.test(name, async () => {
+      const { tracker, child, tabsApi, closed } = await trackedChild();
+      await tracker.recordDocumentCommit(commit("document-c", {
+        transitionQualifiers: ["server_redirect", "forward_back"],
+        backRedirectLoop: true,
+        backAttemptEntryKey: "entry-b",
+        ...commitOverrides,
+      }));
+      const current = snapshot("entry-c", "traverse", snapshotOverrides);
+      const state = await tracker.recordSnapshot(20, current, "document-c");
+      assert.equal(state.backRedirectLoopEntryKey, null);
+      const result = await performConfirmedBackAction(child, current, tabsApi, tracker);
+      assert.notEqual(result.action, "RETURNED_TO_OPENER");
+      assert.deepEqual(closed, []);
+    });
+  }
+});
+
+test("a recovered traverse loop still requires a live matching entry and safe opener", async (t) => {
+  for (const scenario of ["stale document", "changed live entry", "closed opener", "moved opener", "pinned child", "later navigation"]) {
+    await t.test(scenario, async () => {
+      const { tracker, child, tabs, tabsApi, closed } = await trackedChild();
+      await tracker.recordDocumentCommit(commit("document-c", {
+        transitionQualifiers: ["server_redirect", "forward_back"],
+        backRedirectLoop: true,
+        backAttemptEntryKey: "entry-b",
+      }));
+      let current = snapshot("entry-c", "traverse");
+      const state = await tracker.recordSnapshot(
+        20, current, scenario === "stale document" ? "document-b" : "document-c",
+      );
+      if (scenario === "stale document") {
+        assert.equal(state.pendingBackRedirectLoopDocumentId, "document-c");
+        assert.equal(state.backRedirectLoopEntryKey, null);
+      } else {
+        assert.equal(state.backRedirectLoopEntryKey, "entry-c");
+      }
+      if (scenario === "changed live entry") current = snapshot("entry-d", "push");
+      if (scenario === "closed opener") tabs.delete(10);
+      if (scenario === "moved opener") tabs.get(10).windowId = 2;
+      if (scenario === "pinned child") tabs.get(20).pinned = true;
+      if (scenario === "later navigation") {
+        current = snapshot("entry-d", "push", { sameOriginCanGoBack: true });
+        const next = await tracker.recordSnapshot(20, current, "document-c");
+        assert.equal(next.backRedirectLoopEntryKey, null);
+      }
+      const result = await performConfirmedBackAction(child, current, tabsApi, tracker);
+      assert.notEqual(result.action, "RETURNED_TO_OPENER");
+      assert.deepEqual(closed, []);
+    });
+  }
+});
+
 test("mismatched attempt identity and later navigation never authorize closure", async (t) => {
   await t.test("mismatched entry", async () => {
     const { tracker } = await trackedChild();

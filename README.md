@@ -23,6 +23,16 @@ planning are maintained in English.
 
 **Phase 2, four bounded components complete.**
 
+Development version `0.6.6` fixes a missed recovery in the redirected-Back
+path: Brave can report the confirmed return as `traverse`, not only `push`
+or `replace`. The loop marker now survives that snapshot and subsequent
+same-entry updates, allowing the next deliberate gesture to return to the
+validated opener. All existing closure guards, gesture thresholds, the
+1.8-second cooldown and diagnostic retention remain unchanged. Automated
+coverage: **222 passed, 0 failed**. A fresh-child physical-trackpad retest
+after reloading this version is still pending; see the
+[regression matrix](docs/regression-matrix.md#september-17-2026-confirmed-loop-lost-on-a-traverse-snapshot).
+
 Version `0.6.5` handles a confirmed redirected-Back loop. When Backtrack asks
 the browser to traverse internal history, the committed navigation is both a
 Back/Forward traversal and a redirect, and it returns to the exact same page,

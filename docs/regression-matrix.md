@@ -201,6 +201,48 @@ contain `BACK_REDIRECT_LOOP_DETECTED`, then
 `TRACKED_BACK_REDIRECT_LOOP_ENTRY_POINT`, then `RETURNED_TO_OPENER`. A different
 page after the first Back must remain internal and must not close.
 
+### September 17, 2026: confirmed loop lost on a traverse snapshot
+
+The live `0.6.5` log showed `BACK_REDIRECT_LOOP_DETECTED` at 17:00:58 CEST,
+followed immediately by a destination snapshot with `navigationType: TRAVERSE`
+and `canGoBack: false`. The pending marker was cleared without establishing a
+loop entry. Subsequent same-entry `REPLACE`/`TRAVERSE` snapshots could not
+recover it. A follow-up action at 17:01:00 was rejected with 178 ms remaining
+in the normal cooldown; another at 17:01:01 still chose internal history,
+with no subsequent navigation or successful opener return in the log.
+
+Development version `0.6.6` accepts `traverse` only within the existing
+browser-confirmed, exact-document redirected-Back path. It does not change
+ordinary traversal, initial-redirect handling, opener validation, gesture
+thresholds, cooldown duration, permissions or diagnostic retention.
+
+Verification:
+
+- Before the fix, the added tracker replay lost the loop marker, and the real
+  worker integration test returned `USE_INTERNAL_HISTORY` instead of
+  `RETURNED_TO_OPENER` for the `traverse` variant.
+- After the fix, the complete suite reports **222 passed, 0 failed**.
+- Real worker integration covers `push`, `replace` and `traverse` destination
+  snapshots, repeated same-entry updates, the 178 ms cooldown rejection,
+  successful subsequent automatic opener return, and persistent diagnostics.
+- Negative tests retain internal history or refuse closure for missing loop
+  metadata, ordinary traversal, mismatched attempted entry, remaining or
+  unknown same-origin history, unknown/reload snapshot type, stale document,
+  changed live entry, missing/moved opener, pinned child and later navigation.
+- The production log was read for diagnosis and was not cleared or modified.
+  Test storage and tab APIs are isolated in-memory substitutes.
+
+Physical verification is **pending**, not passed. Reload the unpacked extension
+and verify `0.6.6`, refresh the source page, then open a **fresh** child. Existing
+children cannot regain their original tracking state after an extension reload.
+Repeat the affected source → GitHub → redirected Back sequence. Once the page
+has settled and the existing 1.8-second cooldown has elapsed, the next deliberate
+Back gesture should close only the child and focus its valid opener. The log
+should show `BACK_REDIRECT_LOOP_DETECTED`, a `NAVIGATION_STATE` with
+`backRedirectLoopEntry: true`, then a `RETURNED_TO_OPENER` action with decision
+reason `TRACKED_BACK_REDIRECT_LOOP_ENTRY_POINT`. Also check that ordinary
+internal history still runs first and a missing opener never closes the child.
+
 ## Physical Brave/macOS matrix
 
 ### September 5, 2026: root-tab responsiveness follow-up

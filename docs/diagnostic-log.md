@@ -1,6 +1,6 @@
 # Local Development Event Log
 
-Status: September 13, 2026 — development version `0.6.5`.
+Status: September 17, 2026 — development version `0.6.6` (logging unchanged).
 
 ## Browse now, investigate later
 
@@ -89,7 +89,7 @@ await BacktrackGestureDebug.clearPersistentDiagnosticLog()
 
 ## Activation and verification
 
-Reload the unpacked extension and verify version `0.6.5`. Refresh already-open
+Reload the unpacked extension and verify version `0.6.6`. Refresh already-open
 pages so their content scripts match the worker. Test closure only with
 freshly link-opened child tabs: persistent diagnostic records do not restore
 the live entry baseline of tabs that predate an update.

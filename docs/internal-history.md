@@ -141,7 +141,7 @@ condition is present:
   requested. The two addresses are held only in volatile service-worker memory
   for this equality check and are then discarded.
 - The attempted opaque entry still matches the tracker's current entry.
-- The destination document reports a fresh `push` or `replace` entry and
+- The destination document reports a `push`, `replace` or `traverse` entry and
   `navigation.canGoBack === false` for its visible same-origin history.
 - The live action snapshot still identifies that exact loop entry.
 
@@ -151,6 +151,15 @@ after focus changes. A different destination, remaining same-origin history,
 an expired/missing correlation, worker restart before the commit, changed
 entry, protected page, or incomplete browser metadata does not authorize a
 close. A later normal navigation also removes the loop marker.
+
+Version `0.6.6` includes `traverse` because the September 17 Brave log showed
+a browser-confirmed redirected Back followed by exactly that snapshot type.
+In `0.6.5`, this discarded the pending loop marker before subsequent `replace`
+snapshots could confirm it. Accepting `traverse` is restricted to the exact
+destination document of an already-correlated loop; an ordinary history
+traversal alone never establishes a new return boundary. Same-entry updates
+retain the marker, while a changed entry clears it. Unknown or reload snapshot
+types and unknown same-origin back availability do not confirm a loop.
 
 The short-lived full-address comparison is not part of the persistent
 development log or `storage.session`. Only the resulting boolean safety marker,
